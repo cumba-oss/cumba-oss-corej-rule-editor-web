@@ -731,6 +731,7 @@ export interface components {
             path?: string;
         };
         Finding: {
+            dataset?: string;
             groupKey?: {
                 [key: string]: string;
             };

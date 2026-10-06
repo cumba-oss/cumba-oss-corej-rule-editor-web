@@ -553,6 +553,7 @@ function ResultsTab({
             <Table withRowBorders={false} verticalSpacing={2} fz="xs" aria-label="findings">
               <Table.Thead>
                 <Table.Tr>
+                  <Table.Th>dataset</Table.Th>
                   <Table.Th>row</Table.Th>
                   <Table.Th>USUBJID</Table.Th>
                   <Table.Th>SEQ</Table.Th>
@@ -566,6 +567,9 @@ function ResultsTab({
               <Table.Tbody>
                 {report.findings!.map((f, i) => (
                   <Table.Tr key={i}>
+                    <Table.Td style={{ fontFamily: "var(--mantine-font-family-monospace)" }}>
+                      {f.dataset ?? ""}
+                    </Table.Td>
                     <Table.Td>{f.row}</Table.Td>
                     <Table.Td>{f.usubjid}</Table.Td>
                     <Table.Td>{f.seq}</Table.Td>

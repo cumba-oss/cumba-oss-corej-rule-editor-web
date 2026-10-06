@@ -134,7 +134,16 @@ describe("BottomPanel — Results and JSON", () => {
     expect(screen.getByText("executed, violated as expected")).toBeInTheDocument();
     expect(screen.getByText("1 of 1 expectations met")).toBeInTheDocument();
     const findings = screen.getByRole("table", { name: "findings" });
+    // §5.7: the dataset the engine ran the rule on leads each row (several per scenario)
+    const head = within(findings)
+      .getAllByRole("columnheader")
+      .map((h) => h.textContent);
+    expect(head[0]).toBe("dataset");
     const row = within(findings).getAllByRole("row")[1];
+    expect(within(row).getAllByRole("cell")[0]).toHaveTextContent(/^AE$/);
+    expect(
+      within(within(findings).getAllByRole("row")[2]).getAllByRole("cell")[0],
+    ).toBeEmptyDOMElement();
     expect(row).toHaveTextContent("01-701-1015");
     expect(row).toHaveTextContent("AESEQ=1");
     expect(row).toHaveTextContent("AETERM=HEADACHE");

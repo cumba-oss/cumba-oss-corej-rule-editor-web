@@ -426,6 +426,7 @@ export class FakeEngine {
       ? [
           {
             ruleId: "R",
+            dataset: "AE",
             row: 1,
             usubjid: "01-701-1015",
             seq: "1",
@@ -436,6 +437,21 @@ export class FakeEngine {
             groupKey: {},
             namedColumns: ["AETERM"],
             message: "Term is wrong",
+          },
+          // a finding without a dataset (the engine names none): the cell stays empty
+          {
+            ruleId: "R",
+            dataset: undefined,
+            row: 2,
+            usubjid: "01-701-1016",
+            seq: "2",
+            keys: { AESEQ: "2" },
+            values: { AETERM: "" },
+            level: "ERROR",
+            unit: "record",
+            groupKey: {},
+            namedColumns: ["AETERM"],
+            message: "Term is missing",
           },
         ]
       : [];
