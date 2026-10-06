@@ -20,6 +20,8 @@ export function loginProblemText(problem: ProblemError): string {
       return "The forge did not answer — try again later.";
     case "CSRF":
       return "The session token expired — reload the page and try again.";
+    case "RATE_LIMITED":
+      return "Too many login attempts from here — wait a minute and try again.";
     default:
       return problem.detail;
   }

@@ -219,6 +219,13 @@ describe("EditorShell — run (§5.7) and take actual as expected (§5.6)", () =
     fake.engine.nextRunProblem = { status: 429, code: "RATE_LIMITED" };
     fireEvent.keyDown(window, { key: "F5" });
     await waitFor(() => expect(resultsAlert()).toHaveTextContent("RATE_LIMITED"));
+    // the REST fold's codes: one run per user (409), a workspace held by another request (503)
+    fake.engine.nextRunProblem = { status: 409, code: "RUN_IN_PROGRESS" };
+    fireEvent.keyDown(window, { key: "F5" });
+    await waitFor(() => expect(resultsAlert()).toHaveTextContent("(RUN_IN_PROGRESS)"));
+    fake.engine.nextRunProblem = { status: 503, code: "WORKSPACE_BUSY" };
+    fireEvent.keyDown(window, { key: "F5" });
+    await waitFor(() => expect(resultsAlert()).toHaveTextContent("(WORKSPACE_BUSY)"));
   });
 
   it("shows the proposed expectation lines as a diff and writes the scenario buffer only on confirmation", async () => {

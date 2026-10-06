@@ -59,6 +59,9 @@ describe("loginProblemText", () => {
     expect(loginProblemText({ ...base, code: "FORGE_REFUSED" })).toMatch(/refused/);
     expect(loginProblemText({ ...base, code: "FORGE_UNAVAILABLE" })).toMatch(/did not answer/);
     expect(loginProblemText({ ...base, code: "CSRF" })).toMatch(/reload/);
+    expect(loginProblemText({ ...base, status: 429, code: "RATE_LIMITED" })).toBe(
+      "Too many login attempts from here — wait a minute and try again.",
+    );
     expect(loginProblemText({ ...base, code: "OTHER" })).toBe("d");
   });
 });
