@@ -5,6 +5,8 @@ import { renderWithProviders } from "../test/renderWithProviders";
 import { fake } from "../test/handlers";
 import { LoginForm, loginProblemText } from "./LoginForm";
 import { LoginView } from "./LoginView";
+import { http, HttpResponse } from "msw";
+import { server } from "../test/server";
 
 async function fillAndSubmit(loginName = "alice", token = "tok-123") {
   const user = userEvent.setup();
@@ -89,5 +91,24 @@ describe("LoginView", () => {
   it("renders without service info", () => {
     renderWithProviders(<LoginView info={null} onLoggedIn={vi.fn()} />);
     expect(screen.queryByText(/Bound to/)).not.toBeInTheDocument();
+  });
+
+  it("shows the brand's logo and kicker and the light/dark toggle before login", async () => {
+    server.use(
+      http.get("/brand/brand.json", () =>
+        HttpResponse.json({
+          logo: "logo.svg",
+          kicker: "made by X",
+          kickerUrl: "https://x.example/",
+        }),
+      ),
+    );
+    const { container } = renderWithProviders(<LoginView info={null} onLoggedIn={vi.fn()} />);
+    expect(await screen.findByRole("link", { name: "made by X" })).toBeInTheDocument();
+    expect(container.querySelector("img[data-brand-logo]")).toHaveAttribute(
+      "src",
+      "/brand/logo.svg",
+    );
+    expect(screen.getByRole("button", { name: "Switch to dark mode" })).toBeInTheDocument();
   });
 });
