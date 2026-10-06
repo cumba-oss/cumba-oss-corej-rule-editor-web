@@ -84,6 +84,12 @@ anything but localhost is **not supported**. Trial opt-out only, for a throw-awa
 `COOKIE_SECURE=false` (and edit the port binding to reach it from elsewhere) — never with real
 tokens.
 
+`EDITOR_TRUSTED_PROXIES` defaults to exactly the compose network's pinned subnet (`172.28.40.0/24`)
+so the per-client limits count clients, not nginx. If that subnet collides with a host network,
+change the subnet and `EDITOR_TRUSTED_PROXIES` together. A client inside a trusted block cannot be
+told from a proxy, so never trust a wider range; the TLS proxy on the host must append the real
+client to `X-Forwarded-For`.
+
 ## 5. Build the images and start
 
 ```bash
