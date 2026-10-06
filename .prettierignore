@@ -1,0 +1,18 @@
+node_modules
+dist
+target
+coverage
+src/api/schema.d.ts
+package-lock.json
+openapi.snapshot.json
+
+# ⚠ ADDED WHEN THE REPO WAS FLATTENED. `prettier --check .` used to run inside the
+#   monorepo's web module directory and therefore only ever saw SPA sources. At the repo
+#   root it also picks up CI workflows and prose READMEs, and would reformat them —
+#   reflowing comment blocks in the workflows in particular. Flattening must not silently
+#   expand a formatter's remit over CI configuration, so its previous scope is restored here.
+/.gitea/
+/.github/
+/README.md
+/assembly/
+/LICENSE

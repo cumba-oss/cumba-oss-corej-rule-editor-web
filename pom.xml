@@ -1,0 +1,287 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/maven-v4_0_0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <!--
+        ============================================================
+        cumba-oss-corej-rule-editor-web — the coreJ rule editor SPA
+        (PLAN-rule-editor, phase 5: the published twin of
+        cumba-corej-rule-editor-web). The rest half is
+        cumba-oss-corej-rule-editor-rest.
+
+        ⚠ THIS POM IS DELIBERATELY SLIM, shaped like cumba-oss-corej-web:
+        THIS REPOSITORY CONTAINS NO JAVA AT ALL — one React/TypeScript
+        module and an assembly. frontend-maven-plugin drives the npm
+        gate chain (prettier + eslint + tsc + vitest + vite build), and
+        Maven contributes only the pinned Node, the release assembly
+        and ${revision}. No PMD / SpotBugs / JaCoCo / Pitest / Spotless:
+        there is no bytecode for them to look at, and the CI workflow
+        must NEVER be re-synced from the Java template (see
+        .gitea/workflows/main.yml).
+
+        It is a client LEAF: in the meta repo's build_order_clients.txt
+        (check-only), never in build_order.txt, and excluded by name in
+        check_repo_root_anchor.py (`EXCLUDED`) — it carries no
+        repo-root-anchored path.
+        ============================================================
+    -->
+    <groupId>net.cumba</groupId>
+    <artifactId>cumba-oss-corej-rule-editor-web</artifactId>
+    <packaging>pom</packaging>
+    <version>${revision}</version>
+
+    <properties>
+        <general.encoding>UTF-8</general.encoding>
+        <project.build.sourceEncoding>${general.encoding}</project.build.sourceEncoding>
+        <project.build.reportEncoding>${general.encoding}</project.build.reportEncoding>
+
+        <!-- project.basedir requires 3.9.12+ -->
+        <maven.version>3.9.12</maven.version>
+        <!-- revision should be set externally; this is just a fallback -->
+        <revision>0.1.0-SNAPSHOT</revision>
+
+        <!--
+            ⛔ NOTHING IN THIS REPOSITORY IS PUBLISHED AS A MAVEN ARTIFACT. The
+            deliverable is the built SPA, shipped as a release archive and, in the
+            bundled shape (PLAN-rule-editor §4.2), copied into the rest jar by its
+            `bundle-web` profile.
+        -->
+        <maven.deploy.skip>true</maven.deploy.skip>
+
+        <!-- Pinned to the same versions cumba-oss-corej-web uses. -->
+        <plugin.frontend-maven-plugin.version>2.0.2</plugin.frontend-maven-plugin.version>
+        <plugin.maven-enforcer-plugin.version>3.6.3</plugin.maven-enforcer-plugin.version>
+        <plugin.maven-assembly-plugin.version>3.8.0</plugin.maven-assembly-plugin.version>
+        <plugin.flatten-maven-plugin.version>1.8.0</plugin.flatten-maven-plugin.version>
+        <!--
+            ⚠ INERT HERE, KEPT ON PURPOSE (as in cumba-oss-corej-web): this repository
+            configures no Java gates, so these skips suppress nothing. Retained so
+            the file stays a near-copy of its sibling SPA repo.
+        -->
+        <spotbugs.skip>true</spotbugs.skip>
+        <pmd.skip>true</pmd.skip>
+        <jacoco.skip>true</jacoco.skip>
+    </properties>
+
+    <build>
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>com.github.eirslett</groupId>
+                    <artifactId>frontend-maven-plugin</artifactId>
+                    <version>${plugin.frontend-maven-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-enforcer-plugin</artifactId>
+                    <version>${plugin.maven-enforcer-plugin.version}</version>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId>
+                    <artifactId>maven-assembly-plugin</artifactId>
+                    <version>${plugin.maven-assembly-plugin.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
+
+        <plugins>
+            <!-- ⛔ DECLARATION ORDER IS LOAD-BEARING. frontend-maven-plugin, the enforcer and
+                 the assembly are ALL bound to `verify`, and same-phase executions run in
+                 the order their plugins are declared. `vite build` must therefore come
+                 first, or the enforcer checks for a dist/ that does not exist yet and the
+                 assembly would package nothing. -->
+            <plugin>
+                <groupId>com.github.eirslett</groupId>
+                <artifactId>frontend-maven-plugin</artifactId>
+                <configuration>
+                    <nodeVersion>v24.20.0</nodeVersion>
+                    <installDirectory>target</installDirectory>
+                </configuration>
+                <executions>
+                    <!-- Install a pinned Node + npm under target/. Bound to initialize so
+                         Node + deps exist before gen:api (generate-sources). -->
+                    <execution>
+                        <id>install-node-and-npm</id>
+                        <goals>
+                            <goal>install-node-and-npm</goal>
+                        </goals>
+                        <phase>initialize</phase>
+                    </execution>
+                    <!-- Reproducible install from the committed package-lock.json. -->
+                    <execution>
+                        <id>npm-ci</id>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <phase>initialize</phase>
+                        <configuration>
+                            <arguments>ci</arguments>
+                        </configuration>
+                    </execution>
+                    <!-- Generate src/api/schema.d.ts from the committed openapi.snapshot.json
+                         (a copy of cumba-oss-corej-rule-editor-rest's, whose OpenApiSnapshotTest
+                         pins it to the served document) and fail when the regenerated file
+                         differs from the committed one — see scripts/gen-api.mjs. -->
+                    <execution>
+                        <id>gen-api</id>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <phase>generate-sources</phase>
+                        <configuration>
+                            <arguments>run gen:api:check</arguments>
+                        </configuration>
+                    </execution>
+                    <!-- Frontend quality gate: prettier-check + eslint + tsc + vitest coverage
+                         (85/85/70/85) + vite build. -->
+                    <execution>
+                        <id>verify</id>
+                        <goals>
+                            <goal>npm</goal>
+                        </goals>
+                        <phase>verify</phase>
+                        <configuration>
+                            <arguments>run verify</arguments>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-enforcer-plugin</artifactId>
+                <executions>
+                    <execution>
+                        <id>enforce-maven</id>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireMavenVersion>
+                                    <version>[${maven.version},)</version>
+                                </requireMavenVersion>
+                            </rules>
+                        </configuration>
+                    </execution>
+                    <!--
+                        The built SPA must exist before the assembly copies it. An assembly
+                        <fileSet> whose <directory> does not exist is SILENTLY skipped — the
+                        bundle would build green and ship EMPTY. index.html, not the
+                        directory: a stale, empty dist/ would satisfy a directory check.
+                        VERIFY, not prepare-package: `vite build` runs at verify.
+                    -->
+                    <execution>
+                        <id>require-built-spa</id>
+                        <phase>verify</phase>
+                        <goals>
+                            <goal>enforce</goal>
+                        </goals>
+                        <configuration>
+                            <rules>
+                                <requireFilesExist>
+                                    <files>
+                                        <file>${project.basedir}/dist/index.html</file>
+                                    </files>
+                                    <message>The built SPA is missing. It is produced by `vite build` into dist/ at the VERIFY phase and is not committed, so `mvn package` alone is not enough — build with `mvn verify`.</message>
+                                </requireFilesExist>
+                            </rules>
+                            <fail>true</fail>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                ${revision} is a CI-friendly version placeholder. Without flatten the
+                literal string "${revision}" would be written into any installed pom.
+            -->
+            <plugin>
+                <groupId>org.codehaus.mojo</groupId>
+                <artifactId>flatten-maven-plugin</artifactId>
+                <version>${plugin.flatten-maven-plugin.version}</version>
+                <configuration>
+                    <updatePomFile>true</updatePomFile>
+                    <flattenMode>resolveCiFriendliesOnly</flattenMode>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>flatten</id>
+                        <phase>process-resources</phase>
+                        <goals><goal>flatten</goal></goals>
+                    </execution>
+                    <execution>
+                        <id>flatten.clean</id>
+                        <phase>clean</phase>
+                        <goals><goal>clean</goal></goals>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!--
+                The release archive: dist/ as one zip whose root IS the site root, so it can
+                be served by nginx (docker/) or handed to the rest repo's
+                `-Pbundle-web -Dweb.dist.dir=…`. Bound to VERIFY, after `vite build`.
+                appendAssemblyId=false so the release glob gets the readable
+                cumba-oss-corej-rule-editor-web-<version>.zip.
+            -->
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <configuration>
+                    <appendAssemblyId>false</appendAssemblyId>
+                </configuration>
+                <executions>
+                    <execution>
+                        <id>make-web-dist</id>
+                        <phase>verify</phase>
+                        <goals><goal>single</goal></goals>
+                        <configuration>
+                            <finalName>cumba-oss-corej-rule-editor-web-${project.version}</finalName>
+                            <descriptors>
+                                <descriptor>assembly/dist.xml</descriptor>
+                            </descriptors>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <name>Cumba coreJ Rule Editor Web</name>
+    <description>Single-page web UI (React + TypeScript + Vite + CodeMirror) of the coreJ rule editor, over the cumba-oss-corej-rule-editor-rest API.</description>
+    <inceptionYear>2026</inceptionYear>
+    <url child.project.url.inherit.append.path="false">https://github.com/cumba-oss/cumba-oss-corej-rule-editor-web</url>
+    <organization>
+        <name>P300</name>
+        <url>https://www.p-300.com</url>
+    </organization>
+
+    <licenses>
+        <license>
+            <name>AGPL-3.0-only</name>
+            <url>https://www.gnu.org/licenses/agpl-3.0.txt</url>
+            <distribution>repo</distribution>
+            <comments>Licensed under the GNU Affero General Public License, version 3</comments>
+        </license>
+    </licenses>
+
+    <developers>
+        <developer>
+            <name>Michael Weiss</name>
+            <email>mw@p-300.com</email>
+            <organization>P300</organization>
+            <organizationUrl>https://www.p-300.com</organizationUrl>
+        </developer>
+    </developers>
+
+    <scm child.scm.url.inherit.append.path="false"
+         child.scm.connection.inherit.append.path="false"
+         child.scm.developerConnection.inherit.append.path="false">
+        <connection>scm:git:https://github.com/cumba-oss/cumba-oss-corej-rule-editor-web.git</connection>
+        <developerConnection>scm:git:ssh://git@github.com/cumba-oss/cumba-oss-corej-rule-editor-web.git</developerConnection>
+        <url>https://github.com/cumba-oss/cumba-oss-corej-rule-editor-web</url>
+        <tag>HEAD</tag>
+    </scm>
+
+</project>

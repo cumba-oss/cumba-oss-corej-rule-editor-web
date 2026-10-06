@@ -1,0 +1,4 @@
+# Only the built SPA and the nginx template reach the image (Dockerfile).
+*
+!dist/
+!docker/

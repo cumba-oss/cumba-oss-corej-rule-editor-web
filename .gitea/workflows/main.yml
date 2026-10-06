@@ -1,0 +1,297 @@
+# Gitea Actions — build and gate the rule editor SPA, and cut signed releases.
+#
+# The INTERNAL counterpart to .github/workflows/ci.yml. See that file's header for
+# the five things that deliberately differ between the two; do not "unify" them.
+#
+# ⛔ THIS REPOSITORY DEPLOYS NO MAVEN ARTIFACTS — not to Central, not to the internal
+# Nexus. The single module is packaging=pom and the deliverable is the built SPA. There is
+# therefore no deploy job here, unlike every other cumba-oss repo's Gitea workflow.
+#
+# ⚠ No Sonar pass either: the shared Sonar configuration is Java-shaped (JaCoCo exec
+# files, PMD/SpotBugs XML) and this repository has no Java. Coverage is gated instead by
+# vitest's own thresholds in vite.config.ts, which fail the build directly.
+
+name: Build and Release
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # Minutes, not hours. Without a cap a hung npm step sits against the container's
+    # own `/bin/sleep 10800`, so the job burns three hours to report a stall. 30 is what
+    # the internal twin and this repo's .github lane both use; the whole gate is ~30 s.
+    timeout-minutes: 30
+    container:
+      image: ${{ vars.DOCKER_REGISTRY_HOSTNAME }}/maven-with-nodejs:3.9-eclipse-temurin-25
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    env:
+      # ⛔ REQUIRED even though this pom declares zero <dependency>: the PLUGINS still
+      # resolve through the build image's baked-in settings.xml, whose Nexus mirror
+      # declares <server id="nexus"> with ${env.NEXUS_USER} / ${env.NEXUS_PASS} rather
+      # than literal credentials. Without these the very first plugin download is
+      # anonymous and the job dies on 401 — which reads as a broken build and is a
+      # missing-credential fault. Measured: runs 1-4 of this repo ALL failed inside one
+      # second, on maven-enforcer-plugin, before a single gate ran. CI-RUNBOOK Phase 01,
+      # blocker 1.
+      # ⚠ There is deliberately NO counterpart in .github/workflows/ci.yml: that lane is
+      # containerless and resolves from Central, so it has no mirror to authenticate to
+      # — which is exactly why this gap stayed invisible there while GitHub was green and
+      # Gitea was red. It is divergence 4 in that file's header.
+      NEXUS_USER: ${{ secrets.NEXUS_USER }}
+      NEXUS_PASS: ${{ secrets.NEXUS_PASS }}
+      # ⚠ LOAD-BEARING, and referenced by name from vite.config.ts.
+      # The jsdom suite is heavy; uncapped, vitest starts one worker per CPU and
+      # saturates the runner host. A saturated host stalls the Docker daemon, and
+      # act_runner's post-step container-archive copy then times out with
+      # "context deadline exceeded" — which reads as an infrastructure fault, not a
+      # test one. Unset locally → vitest default.
+      VITEST_MAX_WORKERS: 4
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          # ⚠ FULL history, not a shallow clone. `npm run gen:api:check` shells out to
+          #    `git diff` to prove the regenerated schema.d.ts matches the committed one,
+          #    and it fails loudly outside a usable checkout rather than skipping.
+          fetch-depth: 0
+
+      - name: Restore Maven dependencies
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            ${{ runner.os }}-maven-
+
+      # Cache the npm CONTENT-ADDRESSABLE store, not node_modules: `npm ci` deletes
+      # node_modules outright, so caching it saves nothing.
+      - name: Restore npm cache
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          echo "GITHUB_REF_NAME=${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # ⛔ Read the dev version from the pom; do NOT hardcode it here.
+            VERSION="$(sed -n 's:.*<revision>\(.*\)</revision>.*:\1:p' pom.xml | head -1)"
+            if [[ -z "$VERSION" || "$VERSION" != *-SNAPSHOT ]]; then
+                echo "::error::pom.xml <revision> is '$VERSION' - expected a -SNAPSHOT dev version." >&2
+                exit 1
+            fi
+              # ⛔ Has <revision> been bumped since the last release?
+              #
+              # Nothing bumps it automatically. maven-release-plugin would not help: it
+              # rewrites <version> ELEMENTS and leaves <revision> untouched, which for a
+              # ${revision} project replaces the placeholder with a literal and strands the
+              # property (verified by dry run, 2026-09-03). So the reminder lives here.
+              #
+              # ⚠ A shallow checkout hides every tag, which would make this guard pass
+              #   vacuously -- exactly the failure it exists to catch. Say so out loud
+              #   rather than skip quietly.
+              if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = "true" ]; then
+                  echo "::warning::shallow checkout - cannot check <revision> against the last tag."
+              else
+                  LAST_TAG="$(git tag -l 'v*' | sed 's/^v//' | sort -V | tail -1)"
+                  DEV="${VERSION%-SNAPSHOT}"
+                  if [ -n "$LAST_TAG" ]; then
+                      HIGHEST="$(printf '%s\n%s\n' "$DEV" "$LAST_TAG" | sort -V | tail -1)"
+                      if [ "$DEV" = "$LAST_TAG" ] || [ "$HIGHEST" != "$DEV" ]; then
+                          echo "::error::pom.xml <revision> is $VERSION, but v$LAST_TAG is already released."
+                          echo "::error::The dev line was never moved on, so main would publish a snapshot of a released version."
+                          echo "::error::Fix: mvn versions:set-property -Dproperty=revision -DnewVersion=<next>-SNAPSHOT"
+                          exit 1
+                      fi
+                      echo "dev line $VERSION is ahead of the last release v$LAST_TAG"
+                  fi
+              fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
+      - name: Verify
+        run: mvn -B -Drevision=${{ steps.ver.outputs.version }} clean verify | tee maven-verify.log
+
+      - name: Upload Maven verify log
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: maven-verify-log
+          path: maven-verify.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: coverage-report
+          path: coverage/**
+          if-no-files-found: warn
+          retention-days: 7
+
+      # Hand the built SPA to the release job. Short-lived hand-off → low retention.
+      #
+      # ⛔ The artifact NAME must stay `release-archives`: the release job below downloads
+      #    exactly that name, and a mismatch fails at download — BEFORE the signing steps,
+      #    so it does NOT look like a GPG problem. Measured on cumba-oss-corej-rules
+      #    2026-09-03: that repo's Gitea build still uploaded `release-jars` after its
+      #    GitHub twin had moved to archives, and v0.2.0 went red one second in.
+      # ⚠ The glob is VERSION-SCOPED, and if-no-files-found: error, because this release
+      #    is the ONLY delivery this repository has.
+      - name: Upload release archives
+        uses: actions/upload-artifact@v3
+        if: startsWith(github.ref, 'refs/tags/')
+        with:
+          name: release-archives
+          # ⚠ target/, not dist/*-dist/target/. Single module now: the assembly writes
+          #   into this repo's own target/. upload-artifact only WARNS on a no-match.
+          path: target/*-${{ steps.ver.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 2
+
+      - name: Save Maven dependencies
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-maven-${{ hashFiles('**/pom.xml') }}
+
+      - name: Save npm cache
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+
+  # Cut the release LAST — only after the gate passed. A separate job (rather than a
+  # step in `build`) is what makes that ordering a hard guarantee.
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    container:
+      # The JS actions below (download-artifact, gitea-release-action) need a node
+      # runtime; the bare runner host has none. Reuse the node-bearing build image —
+      # heavier than needed, but already pullable, no new dependency.
+      image: ${{ vars.DOCKER_REGISTRY_HOSTNAME }}/maven-with-nodejs:3.9-eclipse-temurin-25
+    # ⛔ bash, EXPLICITLY. Gitea's act_runner defaults a job's steps to `sh -e`, which is
+    # dash — it has no `pipefail` and no `shopt`, both of which the signing steps below
+    # use. GitHub defaults to bash, so this divergence is invisible in the .github file
+    # and fails ONLY here.
+    #   Measured 2026-09-03, cumba-oss-corej-rules v0.2.1:
+    #   "/var/run/act/workflow/1.sh: 2: set: Illegal option -o pipefail"
+    # The `build` job above already declares this; the release job was simply missed.
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v3
+        with:
+          name: release-archives
+          path: release-archives
+
+      # ⛔ NORMALISE THE LAYOUT — do not guess it.
+      #
+      # act_runner's download-artifact does NOT collapse to the least-common-ancestor the
+      # way GitHub's does. Measured on v0.2.2: the download reported "Total number of files
+      # that will be downloaded: 2" and succeeded, and `release-archives/*.zip` STILL
+      # matched nothing — the files land under their original dist/<module>/target/ path
+      # inside release-archives/.
+      #
+      # That is why this step exists rather than a cleverer glob: the signing loop and the
+      # release action below each need a glob, they are checked by different code, and a
+      # no-match is silent in one of them. Flattening once here makes both deterministic.
+      # ⚠ The listing is deliberate: if this ever breaks again, the log shows the actual
+      #    layout instead of leaving the next person to infer it.
+      - name: Flatten downloaded archives
+        run: |
+          set -eo pipefail
+          echo "as downloaded:"
+          find release-archives -type f | sort
+          while IFS= read -r f; do
+              [ "$(dirname "$f")" = "release-archives" ] || mv -v "$f" release-archives/
+          done < <(find release-archives -type f -name '*.zip')
+          find release-archives -mindepth 1 -type d -empty -delete
+          echo "flattened:"
+          find release-archives -type f | sort
+
+      # ⭐ Sign the archive with the same key as the Central artifacts, so consumers have
+      #    ONE trust root. A release asset is mutable — unlike a Central artifact — so
+      #    here the signature is the only thing between a consumer and a swapped file.
+      #    loopback pinentry because a runner has no tty; without it gpg hangs.
+      #
+      # ✅ RESOLVED 2026-09-07: `gpg` IS present. maven-with-nodejs installs gnupg
+      #    explicitly, alongside bzip2, zip/unzip, docker.io, python3 and jq. This read
+      #    UNVERIFIED because no cumba-oss Gitea workflow had ever reached a signing step
+      #    — cumba-oss-corej-rules, the only other one that signs, never got past its
+      #    download — so the image had never had to provide gpg.
+      #    ⚠ Still UNEXERCISED: present in the image is not proven in a run. The preflight
+      #    below therefore stays, turning a future image change into a named cause rather
+      #    than a bare "gpg: command not found" at the end of the job.
+      - name: Import signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -eo pipefail
+          if ! command -v gpg >/dev/null 2>&1; then
+              echo "::error::gpg is not installed in the build image. Release assets" \
+                   "cannot be signed. Add gnupg to maven-with-nodejs, or install it in" \
+                   "this step. Refusing to publish unsigned assets." >&2
+              exit 1
+          fi
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --list-secret-keys --keyid-format=long
+
+      - name: Sign release archives
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -eo pipefail
+          shopt -s nullglob
+          archives=(release-archives/*.zip)
+          if [ ${#archives[@]} -eq 0 ]; then
+              echo "no archives to sign — the release would carry no content" >&2
+              exit 1
+          fi
+          for f in "${archives[@]}"; do
+              gpg --batch --yes --pinentry-mode loopback \
+                  --passphrase "$GPG_PASSPHRASE" \
+                  --armor --detach-sign "$f"
+              gpg --verify "$f.asc" "$f"
+              echo "signed: $f"
+          done
+
+      - name: Create release
+        uses: actions/gitea-release-action@main
+        with:
+          name: "Cumba OSS Rule Editor Web ${{ needs.build.outputs.version }}"
+          # ⚠ FLAT, not `**/`. upload-artifact collapses to the least-common-ancestor and
+          #    the zip comes from one target dir, so the assets land directly in
+          #    release-archives/. The signing step above already assumes this shape; a
+          #    `**/` glob that requires ≥ 1 directory would match nothing and cut a
+          #    release with no assets WITHOUT failing the job.
+          files: |
+            release-archives/*.zip
+            release-archives/*.asc

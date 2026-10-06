@@ -1,26 +1,31 @@
-# ---> Java
-# Compiled class file
-*.class
+# cumba-oss-corej-rule-editor-web — a Java-free Vite/TypeScript SPA (shaped like cumba-oss-corej-web).
 
-# Log file
-*.log
+# Vite build output — the release archive is assembled FROM this, never committed.
+/dist/
 
-# BlueJ files
-*.ctxt
+# Node
+node_modules/
 
-# Mobile Tools for Java (J2ME)
-.mtj.tmp/
+# Maven (the pom only drives frontend-maven-plugin)
+target/
+.flattened-pom.xml
 
-# Package Files #
-*.jar
-*.war
-*.nar
-*.ear
-*.zip
-*.tar.gz
-*.rar
+# Vitest coverage
+coverage/
 
-# virtual machine crash logs, see http://www.java.com/en/download/help/error_hotspot.xml
-hs_err_pid*
-replay_pid*
+# Editors
+.idea/
+*.iml
+.vscode/
+.settings/
+.project
+.classpath
 
+# OS-level cruft
+.DS_Store
+
+# Claude Code working dir
+.claude
+
+# .env files
+.env

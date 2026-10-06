@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+    The built rule editor SPA, as one zip.
+
+    ⚠ The <directory> below is GENERATED (dist, from `vite build`) and is not committed. An
+    assembly fileSet whose directory does not exist is SILENTLY skipped, which would ship a
+    green, empty archive — the enforcer rule in pom.xml exists solely to turn that into a
+    named failure before this descriptor runs.
+-->
+<assembly xmlns="http://maven.apache.org/ASSEMBLY/2.2.0"
+          xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/ASSEMBLY/2.2.0 http://maven.apache.org/xsd/assembly-2.2.0.xsd">
+    <id>web</id>
+    <formats>
+        <format>zip</format>
+    </formats>
+    <!--
+        false: the archive's root IS the site root, so unzipping gives a directory that can be
+        served by nginx (docker/nginx.conf) or handed straight to cumba-oss-corej-rule-editor-rest's
+        `-Pbundle-web -Dweb.dist.dir=…`. A wrapper directory would break both.
+    -->
+    <includeBaseDirectory>false</includeBaseDirectory>
+
+    <fileSets>
+        <fileSet>
+            <directory>${project.basedir}/dist</directory>
+            <outputDirectory>/</outputDirectory>
+        </fileSet>
+        <fileSet>
+            <directory>${project.basedir}/assembly</directory>
+            <outputDirectory>/</outputDirectory>
+            <includes>
+                <include>README.md</include>
+            </includes>
+        </fileSet>
+    </fileSets>
+</assembly>

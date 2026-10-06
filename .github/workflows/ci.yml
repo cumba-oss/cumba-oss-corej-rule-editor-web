@@ -1,0 +1,273 @@
+# GitHub Actions CI — build and gate the rule editor SPA, and cut signed releases.
+#
+# This is the PUBLIC counterpart to .gitea/workflows/main.yml. It runs the same
+# gate against the same commands, so an outside contributor's PR is held to the
+# standard the internal build enforces.
+#
+# ⚠ It is deliberately NOT a copy of the Gitea workflow. Five things invert,
+# and each one breaks the build if carried across:
+#
+#   1. NO CONTAINER. The Gitea job runs in a private image on an internal
+#      registry, which a GitHub runner cannot pull. Java/Node come from the
+#      runner and from frontend-maven-plugin instead.
+#   2. ARTIFACT ACTIONS TRACK THE LATEST MAJOR — the exact OPPOSITE of the
+#      Gitea file, which is pinned to @v3 because act_runner implements the
+#      GHES-style artifact API and rejects v4+. On GitHub, v3 is retired.
+#      Neither pin is portable; do not "unify" them.
+#   3. NO SONAR AND NO NEXUS DEPLOY. Those target internal hosts — and this
+#      repository deploys no Maven artifacts anywhere in any case.
+#   4. NO NEXUS CREDENTIALS. This lane is containerless and resolves from
+#      Central, so there is no mirror to authenticate to; the Gitea job MUST
+#      export NEXUS_USER / NEXUS_PASS because the image's settings.xml sends
+#      everything through an authenticated mirror. ⚠ This asymmetry is why the
+#      two forges disagreed for four runs: the Gitea file simply omitted the
+#      pair, and nothing in THIS file could ever have shown it.
+#   5. NO POST-RELEASE DEV-LINE GUARD. The Gitea "Resolve version" step ALSO
+#      compares <revision> against the newest v* tag and fails `main` when the
+#      dev line was never moved on after a release; this file keeps only the
+#      -SNAPSHOT check. ⭐ So after every tag, Gitea's `main` goes red here while
+#      this lane stays green — and that red is CORRECT, not a defect: without it
+#      `main` republishes a snapshot of a released version. The fix is to bump
+#      <revision>, and the guard's own error message prints the command. Do not
+#      add the guard to this file and do not "repair" that red.
+#      > Measured 2026-09-23: v0.1.0 was tagged, and the next `main` push went red
+#      > on Gitea for exactly this reason. Third red-Gitea/green-GitHub split on
+#      > this repo in one day — the first two were real defects (item 4 and a
+#      > missing GH_REPO below), this one was the guard doing its job. The split
+#      > alone tells you nothing; read the error.
+#
+# ⛔ THIS REPOSITORY PUBLISHES NOTHING TO MAVEN CENTRAL. The single module
+# is packaging=pom and the deliverable is the built SPA, shipped as a signed
+# release asset (runbook Phase 06b). There is deliberately no publish job.
+
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+      - 'v[0-9]+.[0-9]+.[0-9]+.[0-9]+'
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  # Never cancel a tag run — it cuts a release. Branch runs supersede.
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          # ⚠ FULL history, not a shallow clone. `npm run gen:api:check` shells out to
+          #    `git diff` to prove the regenerated schema.d.ts matches the committed one;
+          #    it fails loudly outside a usable checkout rather than skipping.
+          fetch-depth: 0
+
+      - name: Set up JDK
+        uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '25'
+          cache: maven
+
+      # Node is NOT installed here on purpose. frontend-maven-plugin downloads the
+      # version pinned in pom.xml into target/, so the
+      # build uses the same Node locally and on every runner. Installing another one
+      # here would put a second, unpinned Node ahead of it on PATH.
+      - name: Cache npm
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: ${{ runner.os }}-npm-${{ hashFiles('package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-npm-
+
+      - name: Resolve version
+        id: ver
+        run: |
+          echo "GITHUB_REF_NAME=${GITHUB_REF_NAME}"
+          if [[ "${GITHUB_REF}" == refs/tags/* ]]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+          else
+            # ⛔ Read the dev version from the pom; do NOT hardcode it. This line said
+            # 0.1.0-SNAPSHOT in all eight repos, which stopped being any repo's dev
+            # version the first time a line moved on -- so this lane gated a version
+            # unrelated to the one it was building. The comment above already claimed
+            # the pom default was being used; now it is. Matches the Gitea workflow.
+            VERSION="$(sed -n 's:.*<revision>\(.*\)</revision>.*:\1:p' pom.xml | head -1)"
+            if [[ -z "$VERSION" || "$VERSION" != *-SNAPSHOT ]]; then
+                echo "::error::pom.xml <revision> is '$VERSION' - expected a -SNAPSHOT dev version." >&2
+                exit 1
+            fi
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Building version: $VERSION"
+
+      # One pass. The npm chain (prettier --check, eslint, tsc --noEmit, vitest with
+      # coverage thresholds, vite build) is bound to verify by frontend-maven-plugin,
+      # and the dist assembly runs after it in the same phase.
+      - name: Verify
+        run: mvn -B -Drevision=${{ steps.ver.outputs.version }} clean verify | tee maven-verify.log
+
+      - name: Upload Maven verify log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: maven-verify-log
+          path: maven-verify.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Upload coverage report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: coverage/**
+          if-no-files-found: warn
+          retention-days: 7
+
+      # Hand the built SPA to the release job. Short-lived hand-off → low retention.
+      #
+      # ⛔ The artifact NAME must stay `release-archives`: the release job downloads
+      #    exactly that name. A mismatch fails at download — BEFORE the signing steps, so
+      #    it looks like a GPG problem and is not one. Measured on cumba-oss-corej-rules
+      #    2026-09-03: its Gitea build uploaded `release-jars` while its release job
+      #    downloaded `release-archives`, and v0.2.0 went red one second in.
+      # ⚠ The glob is VERSION-SCOPED. No pass runs `clean` on a reused workspace, so
+      #    target/ can still hold a zip from an earlier build at a different version.
+      # ⚠ if-no-files-found: error — this repository publishes nothing to Central, so the
+      #    release IS the only delivery. A silent no-match would cut a release with no
+      #    content at all, which is worse than no release.
+      - name: Upload release archives
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-archives
+          # ⚠ target/, not dist/*-dist/target/. Single module now: the assembly writes
+          #   into this repo's own target/. upload-artifact only WARNS on a no-match.
+          path: target/*-${{ steps.ver.outputs.version }}.zip
+          if-no-files-found: error
+          retention-days: 2
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download release archives
+        uses: actions/download-artifact@v4
+        with:
+          name: release-archives
+          path: release-archives
+
+      # ⛔ NORMALISE THE LAYOUT — do not guess it.
+      #
+      # upload-artifact does NOT reliably collapse to the least-common-ancestor, on either
+      # forge. Measured 2026-09-03 on GitHub: "Upload release archives" and "Download
+      # release archives" both SUCCEEDED and the signing step still found nothing, because
+      # the files kept their dist/<module>/target/ path inside release-archives/.
+      #
+      # This step exists rather than a cleverer glob because the release job has two
+      # consumers of that directory — the signing loop and "Create GitHub Release" — and
+      # they are checked by different code. Flatten once; both can then assume it.
+      # (The release step already uses `find`, so it was immune; signing was not.)
+      - name: Flatten downloaded archives
+        run: |
+          set -eo pipefail
+          echo "as downloaded:"
+          find release-archives -type f | sort
+          while IFS= read -r f; do
+              [ "$(dirname "$f")" = "release-archives" ] || mv -v "$f" release-archives/
+          done < <(find release-archives -type f -name '*.zip')
+          find release-archives -mindepth 1 -type d -empty -delete
+          echo "flattened:"
+          find release-archives -type f | sort
+
+      # ⭐ SIGN EVERY ARCHIVE — the reason is STRONGER here than on Maven Central.
+      #
+      # A release asset CAN be replaced in place by anyone with write access, so the
+      # signature is the only thing between a consumer and a silently swapped archive.
+      # Same key as the Central artifacts, so consumers have ONE trust root, not two.
+      #
+      # ⚠ --batch --yes --pinentry-mode loopback: there is no tty on a runner, and
+      #    without loopback gpg tries to prompt and HANGS the job rather than failing it.
+      - name: Import signing key
+        env:
+          GPG_PRIVATE_KEY: ${{ secrets.GPG_PRIVATE_KEY }}
+        run: |
+          set -eo pipefail
+          printf '%s' "$GPG_PRIVATE_KEY" | gpg --batch --import
+          gpg --list-secret-keys --keyid-format=long
+
+      - name: Sign release archives
+        env:
+          GPG_PASSPHRASE: ${{ secrets.GPG_PASSPHRASE }}
+        run: |
+          set -eo pipefail
+          shopt -s nullglob
+          archives=(release-archives/*.zip)
+          if [ ${#archives[@]} -eq 0 ]; then
+              echo "no archives to sign — the release would carry no content" >&2
+              exit 1
+          fi
+          for f in "${archives[@]}"; do
+              gpg --batch --yes --pinentry-mode loopback \
+                  --passphrase "$GPG_PASSPHRASE" \
+                  --armor --detach-sign "$f"
+              gpg --verify "$f.asc" "$f"
+              echo "signed: $f"
+          done
+
+      # `gh` is preinstalled on GitHub-hosted runners, so this needs no third-party
+      # action — one less dependency to pin and audit in a public repo.
+      # --verify-tag refuses to invent a tag that does not exist.
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # ⛔⛔ GH_REPO IS LOAD-BEARING, and its absence is invisible until a tag.
+          #
+          # This job does NOT check out the repository — it has no need to, and none of
+          # the seven sibling repos check out either. But `gh` resolves the target repo
+          # from the git remote of the working directory, so with no checkout and no
+          # GH_REPO it dies BEFORE it looks at the token:
+          #
+          #   failed to run git: fatal: not a git repository (or any of the parent
+          #   directories): .git
+          #
+          # Measured 2026-09-23 with gh 2.98.0: without GH_REPO that is the whole error,
+          # with GH_REPO the same command reaches the API. So the message names git, not
+          # a repo or a permission, and reads as a checkout bug in a job that is
+          # deliberately checkout-free.
+          #   ⚠ v0.1.0, this repository's FIRST tag: build green, download/flatten/import
+          #   /sign all green, and only this last step red — with the Gitea release job
+          #   green on the same tag, because it uses gitea-release-action and needs no
+          #   repo inference. A red release beside a green one is not evidence about the
+          #   archives; every step that touched them had already passed.
+          # ⭐ All seven cumba-oss siblings set this pair. This file did not, because its
+          # release path was hand-written rather than ported — the same origin as the
+          # missing NEXUS_USER/NEXUS_PASS, and the second defect from it.
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -eo pipefail
+          echo "attaching:"
+          find release-archives \( -name '*.zip' -o -name '*.asc' \) | sort
+          gh release create "${GITHUB_REF_NAME}" \
+              --verify-tag \
+              --title "Cumba OSS Rule Editor Web ${{ needs.build.outputs.version }}" \
+              --generate-notes \
+              $(find release-archives \( -name '*.zip' -o -name '*.asc' \) | sort)
