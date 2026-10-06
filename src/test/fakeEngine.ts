@@ -20,6 +20,9 @@ import type { JsonSchema } from "../engine/schemaWalk";
 
 interface Files {
   files: Map<string, { content: string; blob: string }>;
+  /** The workspace's branch and head, which the engine answers carry. */
+  branch: string;
+  head: string;
   problem(status: number, code: string, detail: string, extra?: Record<string, unknown>): Response;
 }
 
@@ -254,6 +257,12 @@ export class FakeEngine {
   nextRunProblem: { status: number; code: string } | null = null;
   /** When set, the next run waits for this promise before answering (to test "one at a time"). */
   holdRun: Promise<void> | null = null;
+  /** When set, analyses wait for this promise before answering (to test stale answers). */
+  holdAnalyse: Promise<void> | null = null;
+  /** When set, splices wait for this promise before answering (to test concurrent edits). */
+  holdSplice: Promise<void> | null = null;
+  /** How many analyses have answered (a held one counts once it is released). */
+  analysesAnswered = 0;
   /** The next run's report override. */
   nextReport: Partial<RunReportT> | null = null;
 
@@ -275,6 +284,9 @@ export class FakeEngine {
     this.nextAnalyseProblem = null;
     this.nextRunProblem = null;
     this.holdRun = null;
+    this.holdAnalyse = null;
+    this.holdSplice = null;
+    this.analysesAnswered = 0;
     this.nextReport = null;
   }
 
@@ -354,7 +366,8 @@ export class FakeEngine {
               effective: ["USUBJID", ...authored.filter((a) => !excluded.includes(a))],
               authored,
               excluded,
-              derived: authored.length === 0,
+              // whether the rule loaded (OutputVariableListing.derived): always so in this branch
+              derived: loaded,
             },
             authorities: [
               { Organization: "CDISC", Standards: [{ Name: "SDTMIG", Version: "3.3" }] },
@@ -474,14 +487,14 @@ export class FakeEngine {
       http.post("/api/analyse", async ({ request }) => {
         const body = (await request.json()) as { path: string; content: string; docs?: string };
         this.analyses.push(body);
-        if (this.nextAnalyseProblem) {
-          const p = this.nextAnalyseProblem;
-          this.nextAnalyseProblem = null;
-          return ws.problem(p.status, p.code, p.code);
-        }
+        const problem = this.nextAnalyseProblem;
+        this.nextAnalyseProblem = null;
+        if (this.holdAnalyse) await this.holdAnalyse;
+        this.analysesAnswered++;
+        if (problem) return ws.problem(problem.status, problem.code, problem.code);
         return HttpResponse.json({
-          branch: "feature/x",
-          head: "aaaa111",
+          branch: ws.branch,
+          head: ws.head,
           analysis: this.analyse(body.content, body.docs),
         });
       }),
@@ -541,6 +554,7 @@ export class FakeEngine {
       http.post("/api/cdt/splice", async ({ request }) => {
         const body = (await request.json()) as { content: string; dataset: DatasetT };
         this.splices.push(body.dataset);
+        if (this.holdSplice) await this.holdSplice;
         const refused = spliceCheck(body.dataset);
         if (refused) return ws.problem(400, "CDT_UNREPRESENTABLE", refused);
         const spliced = spliceCdt(body.content, body.dataset);
@@ -563,6 +577,9 @@ export class FakeEngine {
       http.post("/api/run", async ({ request }) => {
         const body = (await request.json()) as (typeof this.runs)[number];
         this.runs.push(body);
+        // the branch the run ran on — a switch while it is held does not change it
+        const branch = ws.branch;
+        const head = ws.head;
         if (this.nextRunProblem) {
           const p = this.nextRunProblem;
           this.nextRunProblem = null;
@@ -575,7 +592,7 @@ export class FakeEngine {
         if (this.holdRun) await this.holdRun;
         const report = this.report(body.content, body.scenarioContent);
         this.nextReport = null;
-        return HttpResponse.json({ branch: "feature/x", head: "aaaa111", report });
+        return HttpResponse.json({ branch, head, report });
       }),
     ];
   }
@@ -641,6 +658,7 @@ export function parseCdt(text: string): ParsedT {
       continue;
     }
     if (!current) continue;
+    if (t.startsWith("#")) continue; // a comment inside a block (a splice drops it)
     if (t.startsWith("col ")) {
       const rest = t.slice(4).trim();
       const sp = rest.indexOf(" ");

@@ -63,7 +63,7 @@ function NewScenarioBody({
   const defaultDataset = analysis?.derived?.evaluationDomain ?? uniqueDatasets[0] ?? "";
   const [datasets, setDatasets] = useState<string[]>(defaultDataset ? [defaultDataset] : []);
   const [extra, setExtra] = useState("");
-  const [expect, setExpect] = useState<"violation" | "no-violation">("violation");
+  const [expect, setExpect] = useState<"violation" | "noViolation">("violation");
   const suggested =
     request.mode === "clone"
       ? (request.source?.name ?? "copy.cdt").replace(/\.cdt$/, "-copy.cdt")
@@ -102,9 +102,9 @@ function NewScenarioBody({
           <Select
             label="expect"
             aria-label="expect"
-            data={["violation", "no-violation"]}
+            data={["violation", "noViolation"]}
             value={expect}
-            onChange={(v) => setExpect(v === "no-violation" ? "no-violation" : "violation")}
+            onChange={(v) => setExpect(v === "noViolation" ? "noViolation" : "violation")}
           />
           <Checkbox.Group label="Datasets (in scope)" value={datasets} onChange={setDatasets}>
             <Group gap="sm" mt={4}>

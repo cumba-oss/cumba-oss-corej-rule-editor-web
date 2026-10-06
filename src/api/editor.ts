@@ -43,7 +43,11 @@ export function session(): Promise<ApiResult<SessionInfoT>> {
   return call(api.GET("/api/session"));
 }
 
-/** Logs in; the CSRF token is re-fetched afterwards because the server rotates the session. */
+/**
+ * Logs in. The server changes the session id at login; whether the CSRF token survives that
+ * change is the server's business, so the client never relies on either — it drops its cached
+ * token and re-reads it with the next mutating request.
+ */
 export async function login(loginName: string, token: string): Promise<ApiResult<SessionInfoT>> {
   const result = await call(api.POST("/api/session/login", { body: { login: loginName, token } }));
   resetCsrf();

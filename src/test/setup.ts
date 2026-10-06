@@ -40,6 +40,11 @@ if (typeof proto.getBoundingClientRect !== "function") {
   proto.getBoundingClientRect = () => rect;
 }
 
+// jsdom lacks scrollIntoView; Mantine's Select scrolls its selected option into view on opening.
+if (typeof Element.prototype.scrollIntoView !== "function") {
+  Element.prototype.scrollIntoView = () => {};
+}
+
 beforeAll(() => server.listen({ onUnhandledRequest: "error" }));
 beforeEach(() => {
   fake.reset();

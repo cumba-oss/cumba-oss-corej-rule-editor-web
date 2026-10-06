@@ -57,7 +57,7 @@ describe("BottomPanel — Scenarios", () => {
   it("lists the suite's rows, selects on click, opens on double-click, offers new / clone", async () => {
     const user = userEvent.setup();
     const p = props({
-      lastRuns: { [SCENARIO]: { outcome: "FAIL", code: "VERDICT", at: 1 } },
+      lastRuns: { [SCENARIO]: { outcome: "FAIL", code: "VERDICT", at: 1, branch: "feature/x" } },
       runBusy: false,
     });
     renderWithProviders(<BottomPanel {...p} />);
@@ -77,6 +77,13 @@ describe("BottomPanel — Scenarios", () => {
     expect(p.onSelectScenario).toHaveBeenCalledWith(SCENARIO.replace("invalid", "valid"));
     await user.dblClick(rows[1]);
     expect(p.onOpen).toHaveBeenCalledWith(SCENARIO.replace("invalid", "valid"));
+    // the keyboard reaches the same two actions (review 7): Space selects, Enter opens
+    expect(rows[0]).toHaveAttribute("tabindex", "0");
+    rows[0].focus();
+    await user.keyboard(" ");
+    expect(p.onSelectScenario).toHaveBeenLastCalledWith(SCENARIO);
+    await user.keyboard("{Enter}");
+    expect(p.onOpen).toHaveBeenLastCalledWith(SCENARIO);
 
     await user.click(screen.getByRole("button", { name: "New from rule" }));
     expect(p.onNewScenario).toHaveBeenCalledWith("rule");
@@ -114,9 +121,13 @@ describe("BottomPanel — Results and JSON", () => {
   it("shows the verdict line, the checks, the findings table and offers take-as-expected", async () => {
     const user = userEvent.setup();
     const report = fake.engine.report("rule", "#test X expect=violation");
-    const p = props({ report });
-    renderWithProviders(<BottomPanel {...p} />);
+    const p = props({ report, reportScenario: SCENARIO, reportCurrent: true });
+    const { rerender } = renderWithProviders(<BottomPanel {...p} />);
     await user.click(screen.getByRole("tab", { name: "Results (PASS)" }));
+    // the header names the scenario the report ran
+    expect(screen.getByLabelText("report scenario")).toHaveTextContent(
+      "Scenario CDISC-CG0270-invalid-AE.cdt",
+    );
     expect(screen.getByText("PASS")).toBeInTheDocument();
     expect(screen.getByText("OK")).toBeInTheDocument();
     expect(screen.getByText("as expected")).toBeInTheDocument();
@@ -130,6 +141,15 @@ describe("BottomPanel — Results and JSON", () => {
     expect(row).toHaveTextContent("Term is wrong");
     await user.click(screen.getByRole("button", { name: "Take actual as expected" }));
     expect(p.onTakeExpected).toHaveBeenCalled();
+
+    // another scenario selected: the report says whose it is, and its expectations cannot be taken
+    const other = SCENARIO.replace("invalid", "valid");
+    rerender(<BottomPanel {...p} selectedScenario={other} reportCurrent={false} />);
+    expect(screen.getByLabelText("report scenario")).toHaveTextContent(
+      "Scenario CDISC-CG0270-invalid-AE.cdt — not the selected scenario (CDISC-CG0270-valid-AE.cdt)",
+    );
+    expect(screen.queryByRole("button", { name: "Take actual as expected" })).toBeNull();
+    rerender(<BottomPanel {...p} />);
 
     await user.click(screen.getByRole("tab", { name: "JSON" }));
     expect(screen.getByRole("region", { name: "report JSON" })).toHaveTextContent('"json-2"');

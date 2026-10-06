@@ -19,8 +19,8 @@ const MUTATING = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 let csrfInfo: Promise<{ headerName: string; token: string }> | null = null;
 
 /**
- * Drop the cached CSRF token. The rest app rotates it with the session, so the SPA re-fetches
- * it after login and after logout (rest README § Session and CSRF).
+ * Drop the cached CSRF token, so the next mutating request reads it afresh. Called after login
+ * and logout: the session changes there, and the SPA does not assume whether the token does.
  */
 export function resetCsrf(): void {
   csrfInfo = null;

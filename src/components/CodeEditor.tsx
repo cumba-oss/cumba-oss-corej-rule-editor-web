@@ -5,6 +5,7 @@ import { EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
 import { foldEffect } from "@codemirror/language";
 import {
+  forEachDiagnostic,
   lintGutter,
   linter,
   setDiagnostics,
@@ -49,8 +50,12 @@ interface Props {
   initialFoldKeys?: string[];
   /** Re-applies the initial fold whenever this value changes, without folding on every edit. */
   foldTrigger?: number | string;
-  /** Inline diagnostic markers (lint gutter + underlines). */
-  markers?: EditorMarker[];
+  /**
+   * Inline diagnostic markers (lint gutter + underlines). `null` keeps the markers the editor
+   * already shows, mapped through the edits since — for an analysis that is pending or failed,
+   * whose ranges describe other text.
+   */
+  markers?: EditorMarker[] | null;
   /**
    * The engine context for completion and tooltips (rule tabs). Its presence switches both on;
    * the value is read lazily so a new context never rebuilds the extension set.
@@ -72,6 +77,13 @@ function toDiagnostics(len: number, markers: EditorMarker[]): CmDiagnostic[] {
       severity: m.severity,
       message: m.message,
     }));
+}
+
+/** The diagnostics the editor shows now, at their mapped positions. */
+function currentDiagnostics(state: EditorView["state"]): CmDiagnostic[] {
+  const out: CmDiagnostic[] = [];
+  forEachDiagnostic(state, (d, from, to) => out.push({ ...d, from, to }));
+  return out;
 }
 
 /**
@@ -102,11 +114,11 @@ export function CodeEditor({
   // reset the initial fold — when markers / onSave change. The reads happen inside callbacks that
   // run after render (lint pass, key press), not during render; react-hooks/refs can't see that,
   // hence the scoped suppressions.
-  const markersRef = useRef<EditorMarker[]>([]);
+  const markersRef = useRef<EditorMarker[] | null>([]);
   const onSaveRef = useRef<(() => void) | undefined>(undefined);
   const engineRef = useRef<EngineContext>(EMPTY_CONTEXT);
   useEffect(() => {
-    markersRef.current = markers ?? [];
+    markersRef.current = markers === undefined ? [] : markers;
   }, [markers]);
   useEffect(() => {
     onSaveRef.current = onSave;
@@ -118,7 +130,12 @@ export function CodeEditor({
   /* eslint-disable react-hooks/refs -- the two refs below are read inside CodeMirror callbacks
      (the lint pass, the key press), which run after render; the rule cannot see that. */
   const lintSource = useMemo(
-    () => linter((view) => toDiagnostics(view.state.doc.length, markersRef.current)),
+    () =>
+      linter((view) =>
+        markersRef.current === null
+          ? currentDiagnostics(view.state)
+          : toDiagnostics(view.state.doc.length, markersRef.current),
+      ),
     [],
   );
 
@@ -197,7 +214,7 @@ export function CodeEditor({
     (view: EditorView) => {
       if (withEngine)
         view.dispatch({ effects: setDerived.of(derivedRef.current ?? EMPTY_DERIVED) });
-      if (markersRef.current.length) {
+      if (markersRef.current?.length) {
         view.dispatch(
           setDiagnostics(view.state, toDiagnostics(view.state.doc.length, markersRef.current)),
         );
@@ -212,7 +229,7 @@ export function CodeEditor({
   // answering after the lint delay — would never show; setting them directly cannot race.)
   useEffect(() => {
     const view = cmRef.current?.view;
-    if (view) {
+    if (view && markers !== null) {
       view.dispatch(
         setDiagnostics(view.state, toDiagnostics(view.state.doc.length, markers ?? [])),
       );

@@ -82,6 +82,7 @@ abstract class DerivedWidget extends WidgetType {
   toDOM(): HTMLElement {
     const dom = document.createElement("div");
     dom.className = `cm-derived-widget${this.stale ? " cm-derived-stale" : ""}`;
+    dom.setAttribute("role", "note");
     dom.setAttribute("aria-label", `${this.name} (generated, read-only)`);
     dom.contentEditable = "false";
     dom.style.cssText = [
@@ -138,11 +139,26 @@ class OutputVariablesWidget extends DerivedWidget {
       dom.appendChild(this.header("Output_Variables: —", ["no rule loaded"]));
       return;
     }
-    dom.appendChild(
-      this.header("Output_Variables:", [ov.derived ? "effective, derived" : "effective, authored"]),
-    );
+    // `derived` is whether the rule loaded (P7 / L2 of the effective-output-variables plan): a rule
+    // that failed to load has no derivation, so its list is the authored one, said in words.
+    if (!ov.derived) {
+      dom.appendChild(this.header("Output_Variables:", ["rule failed to load — list as authored"]));
+      for (const name of ov.authored ?? []) dom.appendChild(el("div", `- "${name}"`));
+      for (const name of ov.excluded ?? []) {
+        dom.appendChild(el("div", `- "!${name}"   # excluded`, "text-decoration: line-through"));
+      }
+      return;
+    }
+    dom.appendChild(this.header("Output_Variables:", ["effective"]));
+    const effective = ov.effective ?? [];
+    if (effective.length === 0) {
+      // P4: an empty effective list is not "reports nothing" — the run infers the Check's columns
+      dom.appendChild(
+        el("div", "# none listed — at run time the engine reports the columns the Check reads"),
+      );
+    }
     const authored = new Set(ov.authored ?? []);
-    for (const name of ov.effective ?? []) {
+    for (const name of effective) {
       const mark = authored.has(name) ? "   # authored" : "";
       const line = el("div", `- "${name}"${mark}`);
       if (authored.has(name)) line.style.color = "var(--mantine-color-text)";

@@ -103,6 +103,35 @@ describe("NewScenarioDialog", () => {
     );
   });
 
+  it("writes the parser's expect= token for a scenario that expects no violation", async () => {
+    const user = userEvent.setup();
+    const onCreate = vi.fn();
+    renderWithProviders(
+      <NewScenarioDialog
+        request={{ mode: "rule" }}
+        ruleId="CDISC-CG0270"
+        analysis={analysis}
+        existing={[]}
+        sourceText={null}
+        onCreate={onCreate}
+        onCancel={vi.fn()}
+      />,
+    );
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog)
+        .getAllByLabelText("expect")
+        .find((e) => e.tagName === "INPUT")!,
+    );
+    // RuleTestCdt accepts violation / noViolation / skipped / executionError — never no-violation
+    await user.click(await screen.findByRole("option", { name: "noViolation" }));
+    expect(within(dialog).getByLabelText("File name")).toHaveValue("CDISC-CG0270-valid-AE.cdt");
+    await user.click(within(dialog).getByRole("button", { name: "Create" }));
+    const content = onCreate.mock.calls[0][1] as string;
+    expect(content).toContain("#test CDISC-CG0270 expect=noViolation domain=AE\n");
+    expect(content).not.toContain("#expectViolationCount");
+  });
+
   it("clones the source buffer under a new name", async () => {
     const user = userEvent.setup();
     const onCreate = vi.fn();
@@ -188,8 +217,13 @@ describe("TakeExpectedDialog", () => {
 describe("EngineBanner", () => {
   it("fires on any mismatch, naming both levels, with direction-specific text", () => {
     expect(versionBanner(3, 3)).toBeNull();
-    expect(versionBanner(3, null)).toBeNull();
+    // not known yet: no banner; declared none: level 0, which predates every engine (review 8)
     expect(versionBanner(3, undefined)).toBeNull();
+    expect(versionBanner(3, null)).toEqual({
+      title: "This branch predates the engine — update from default",
+      message:
+        "The branch declares no rule-language level (rules-src/LANGUAGE-LEVEL), so it predates level 1; this editor's engine runs level 3. Rules may fail to load until the branch is updated from the default branch.",
+    });
     expect(versionBanner(undefined, 3)).toBeNull();
     expect(versionBanner(3, 4)).toEqual({
       title: "This branch needs a newer editor",

@@ -104,7 +104,7 @@ describe("CodeEditor — the greyed generated fields (phase 3)", () => {
       effective: ["USUBJID", "AETERM"],
       authored: ["AETERM"],
       excluded: ["AESEQ"],
-      derived: false,
+      derived: true,
     },
     authorities: [{ Organization: "CDISC" }],
     wildcardNames: [],
@@ -132,13 +132,19 @@ describe("CodeEditor — the greyed generated fields (phase 3)", () => {
     await waitFor(() => expect(container.querySelectorAll(".cm-derived-widget")).toHaveLength(2));
     const [sensitivity, output] = Array.from(container.querySelectorAll(".cm-derived-widget"));
     expect(sensitivity).toHaveAttribute("aria-label", "Sensitivity (generated, read-only)");
+    expect(sensitivity).toHaveAttribute("role", "note");
     expect(sensitivity.textContent).toContain(
       'Sensitivity: "Record"   # generated · confidence HIGH',
     );
     expect(sensitivity.querySelector("[title]")).toHaveAttribute("title", "row-level reads only");
-    expect(output.textContent).toContain("Output_Variables:   # generated · effective, authored");
-    expect(output.textContent).toContain('- "USUBJID"');
-    expect(output.textContent).toContain('- "AETERM"   # authored');
+    // the effective list in its order, the authored entry marked, the derived one (USUBJID) not,
+    // then the exclusion struck through — line for line
+    expect(Array.from(output.children).map((d) => d.textContent)).toEqual([
+      "Output_Variables:   # generated · effective",
+      '- "USUBJID"',
+      '- "AETERM"   # authored',
+      '- "!AESEQ"   # excluded',
+    ]);
     const struck = Array.from(output.querySelectorAll("div")).find((d) =>
       d.textContent?.includes("!AESEQ"),
     )!;
@@ -184,6 +190,71 @@ describe("CodeEditor — the greyed generated fields (phase 3)", () => {
       ),
     );
     expect(container.querySelector(".cm-derived-widget")!.textContent).toContain("Sensitivity: —");
+  });
+
+  it("says why an Output_Variables list is empty, and what a rule that failed to load lists", async () => {
+    const outputOf = (c: HTMLElement) =>
+      Array.from(c.querySelectorAll(".cm-derived-widget")[1].children).map((d) => d.textContent);
+    const ov = (outputVariables: typeof derived.outputVariables) => ({
+      derived: { ...derived, outputVariables },
+      status: "ok" as const,
+      showAuthorities: false,
+    });
+    const { container, rerender } = renderWithProviders(
+      <CodeEditor
+        label="x"
+        language="yaml"
+        value={RULE}
+        onChange={vi.fn()}
+        engine={engine}
+        derived={ov({ effective: [], authored: [], excluded: [], derived: true })}
+      />,
+    );
+    // P4: an empty effective list is not "reports nothing"
+    await waitFor(() =>
+      expect(outputOf(container)).toEqual([
+        "Output_Variables:   # generated · effective",
+        "# none listed — at run time the engine reports the columns the Check reads",
+      ]),
+    );
+    // P7 / L2: derived=false is a rule that failed to load — the authored list, said so, no P4
+    rerender(
+      <CodeEditor
+        label="x"
+        language="yaml"
+        value={RULE}
+        onChange={vi.fn()}
+        engine={engine}
+        derived={ov({
+          effective: ["AETERM"],
+          authored: ["AETERM"],
+          excluded: ["AESEQ"],
+          derived: false,
+        })}
+      />,
+    );
+    await waitFor(() =>
+      expect(outputOf(container)).toEqual([
+        "Output_Variables:   # generated · rule failed to load — list as authored",
+        '- "AETERM"',
+        '- "!AESEQ"   # excluded',
+      ]),
+    );
+    rerender(
+      <CodeEditor
+        label="x"
+        language="yaml"
+        value={RULE}
+        onChange={vi.fn()}
+        engine={engine}
+        derived={ov({ effective: [], authored: [], excluded: [], derived: false })}
+      />,
+    );
+    await waitFor(() =>
+      expect(outputOf(container)).toEqual([
+        "Output_Variables:   # generated · rule failed to load — list as authored",
+      ]),
+    );
   });
 
   it("reveals a range on request and folds JSON by brackets", async () => {

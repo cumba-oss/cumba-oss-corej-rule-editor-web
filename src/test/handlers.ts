@@ -111,7 +111,7 @@ export class FakeWorkspace {
         "src/test/resources/net/cumba/corej/core/ruletestsuites/cdisc/CDISC-CG0270/CDISC-CG0270-valid-AE.cdt",
         {
           content:
-            "#!RuleTest\n#test CDISC-CG0270 expect=no-violation domain=AE\ndataset AE\ncol AETERM type=Char\n---\nx\n---\n",
+            "#!RuleTest\n#test CDISC-CG0270 expect=noViolation domain=AE\ndataset AE\ncol AETERM type=Char\n---\nx\n---\n",
           blob: "s2",
         },
       ],

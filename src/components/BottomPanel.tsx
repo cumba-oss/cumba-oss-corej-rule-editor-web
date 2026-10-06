@@ -36,6 +36,10 @@ interface Props {
   onNewScenario: (mode: "rule" | "clone", source?: ScenarioT) => void;
   lastRuns: Record<string, LastRun>;
   report: RunReportT | undefined;
+  /** The scenario the report ran (the Results header names it). */
+  reportScenario?: string;
+  /** The report is the selected scenario's: only then may its expectations be taken. */
+  reportCurrent?: boolean;
   runError: string | undefined;
   runBusy: boolean;
   canRun: boolean;
@@ -63,6 +67,10 @@ function outcomeColor(outcome: string | undefined): string {
   return "orange";
 }
 
+function fileName(path: string | undefined): string {
+  return path ? path.slice(path.lastIndexOf("/") + 1) : "";
+}
+
 function mapText(m: Record<string, string> | undefined): string {
   return Object.entries(m ?? {})
     .map(([k, v]) => `${k}=${v}`)
@@ -79,6 +87,10 @@ export function BottomPanel(props: Props) {
   const problem = useMemo(() => syntaxProblem(tab), [tab]);
   const diagnostics = analysis?.analysis?.diagnostics ?? [];
   const problemCount = diagnostics.length + (problem ? 1 : 0);
+  const analysable = !!tab && (tab.kind === "rule" || tab.kind === "docs");
+  /** Diagnostics of an analysis that no longer describes the buffers (pending or failed). */
+  const staleDiagnostics =
+    analysable && (analysisStatus === "pending" || analysisStatus === "failed");
   const scenarios = suite?.value?.scenarios ?? null;
 
   return (
@@ -127,8 +139,9 @@ export function BottomPanel(props: Props) {
                 Nothing open.
               </Text>
             )}
-            {tab && (tab.kind === "rule" || tab.kind === "docs") && (
+            {analysable && (
               <Text size="xs" c="dimmed">
+                {analysisStatus === "none" && "Not analysed — open the rule to analyse it."}
                 {analysisStatus === "pending" && "Analysing…"}
                 {analysisStatus === "failed" && (
                   <>
@@ -156,8 +169,19 @@ export function BottomPanel(props: Props) {
                 YAML: {problem}
               </Text>
             )}
+            {staleDiagnostics && diagnostics.length > 0 && (
+              <Text size="xs" c="orange">
+                From the last analysis — stale until the new one is in:
+              </Text>
+            )}
             {diagnostics.map((d, i) => (
-              <Group key={i} gap="xs" wrap="nowrap" align="flex-start">
+              <Group
+                key={i}
+                gap="xs"
+                wrap="nowrap"
+                align="flex-start"
+                style={staleDiagnostics ? { opacity: 0.55 } : undefined}
+              >
                 <Badge
                   size="xs"
                   variant="light"
@@ -180,11 +204,14 @@ export function BottomPanel(props: Props) {
                 </Anchor>
               </Group>
             ))}
-            {tab && !problem && diagnostics.length === 0 && analysisStatus !== "pending" && (
-              <Text size="sm" c="dimmed">
-                No problems.
-              </Text>
-            )}
+            {tab &&
+              !problem &&
+              diagnostics.length === 0 &&
+              (!analysable || analysisStatus === "ok") && (
+                <Text size="sm" c="dimmed">
+                  No problems.
+                </Text>
+              )}
           </Stack>
         </ScrollArea>
       </Tabs.Panel>
@@ -330,8 +357,21 @@ function ScenariosTab({
                 <Table.Tr
                   key={s.path}
                   aria-selected={isSelected}
+                  aria-label={`scenario ${s.name}`}
+                  title="Click or Space: run target · double-click or Enter: open"
+                  tabIndex={0}
                   onClick={() => s.path && onSelectScenario(s.path)}
                   onDoubleClick={() => s.path && onOpen(s.path)}
+                  onKeyDown={(e) => {
+                    if (!s.path) return;
+                    if (e.key === " ") {
+                      e.preventDefault();
+                      onSelectScenario(s.path);
+                    } else if (e.key === "Enter") {
+                      e.preventDefault();
+                      onOpen(s.path);
+                    }
+                  }}
                   style={{
                     cursor: "pointer",
                     background: isSelected ? "var(--mantine-color-default-hover)" : undefined,
@@ -414,6 +454,9 @@ function CheckLine({
 
 function ResultsTab({
   report,
+  reportScenario,
+  reportCurrent,
+  selectedScenario,
   runError,
   runBusy,
   canRun,
@@ -427,7 +470,7 @@ function ResultsTab({
         <Button size="compact-xs" onClick={onRun} disabled={!canRun} loading={runBusy}>
           Run (F5)
         </Button>
-        {report?.expectations?.lines && (
+        {report?.expectations?.lines && reportCurrent && (
           <Tooltip label="Propose the observed findings as the scenario's expectation lines — shown as a diff, written only on confirmation">
             <Button size="compact-xs" variant="default" onClick={onTakeExpected}>
               Take actual as expected
@@ -447,6 +490,22 @@ function ResultsTab({
       )}
       {report && (
         <>
+          {reportScenario && (
+            <Text size="xs" aria-label="report scenario">
+              Scenario{" "}
+              <Text span fw={600} style={{ fontFamily: "var(--mantine-font-family-monospace)" }}>
+                {fileName(reportScenario)}
+              </Text>
+              {!reportCurrent && (
+                <Text span c="orange">
+                  {" "}
+                  — not the selected scenario
+                  {selectedScenario ? ` (${fileName(selectedScenario)})` : ""}: run it to take its
+                  expectations
+                </Text>
+              )}
+            </Text>
+          )}
           <Group gap="xs">
             <Badge color={outcomeColor(report.outcome)} variant="filled">
               {report.outcome}

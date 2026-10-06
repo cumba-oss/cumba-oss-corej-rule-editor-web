@@ -125,6 +125,106 @@ export function writeExpectations(text: string, e: Expectations): string {
   return out.join(nl);
 }
 
+/** The first `#test` line of a text's prelude, trimmed, or `null`. */
+export function testLine(text: string): string | null {
+  for (const raw of splitLines(text)) {
+    const line = raw.trim();
+    if (line.startsWith("dataset ")) return null;
+    if (TEST.test(line)) return line;
+  }
+  return null;
+}
+
+/**
+ * The text with the first `#test` line's `expect=` set to `expect` — that one token, nothing else
+ * (the line terminator, every other line and token are untouched). No `#test` line: unchanged.
+ */
+export function setTestExpect(text: string, expect: string): string {
+  const nl = newlineOf(text);
+  const lines = splitLines(text);
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.startsWith("dataset ")) break;
+    const t = TEST.exec(line);
+    if (t) {
+      lines[i] = `#test ${t[1]}${setToken(t[2], "expect", expect)}`;
+      return lines.join(nl);
+    }
+  }
+  return text;
+}
+
+/** What "take actual as expected" proposes for a scenario text, as the confirm diff shows it. */
+export interface ExpectationProposal {
+  /** The lines the diff starts from: the `#test` line when `expect=` changes, the expectation lines. */
+  current: string[];
+  /** The lines the diff ends with, in the same shape. */
+  proposed: string[];
+  /** The `#expectViolation*` lines to write (`POST /api/cdt/expectations`). */
+  lines: string[];
+  /** The `expect=` value to write into the `#test` line, or `null` when it stays. */
+  expect: string | null;
+}
+
+/**
+ * A run's proposal against a scenario text (review 1 + REST fold): the proposed
+ * `#expectViolation*` lines, and — when the run says the scenario should expect something else —
+ * the `#test` line with its new `expect=`. The REST app names the token as `expect` (with the
+ * line it would write as `testLine`); a `#test` line among the proposed lines reads the same. The
+ * diff's `#test` line is computed against the BUFFER, which may have changed since the run.
+ */
+export function expectationProposal(
+  text: string,
+  proposedLines: string[],
+  proposedExpect?: string | null,
+): ExpectationProposal {
+  const lines = proposedLines.map((l) => l.trim()).filter((l) => !TEST.test(l));
+  const fromLine = proposedLines.map((l) => l.trim()).find((l) => TEST.test(l));
+  const wanted = proposedExpect || (fromLine ? readExpectations(fromLine).expect : null);
+  const currentTest = testLine(text);
+  const currentExpect = readExpectations(text).expect;
+  // the parser reads the token case-insensitively, so `noviolation` already says `noViolation`
+  const expect =
+    wanted && currentTest && wanted.toLowerCase() !== (currentExpect ?? "").toLowerCase()
+      ? wanted
+      : null;
+  if (!expect || !currentTest) {
+    return { current: expectationLines(text), proposed: lines, lines, expect: null };
+  }
+  return {
+    current: [currentTest, ...expectationLines(text)],
+    proposed: [testLine(setTestExpect(text, expect)) ?? currentTest, ...lines],
+    lines,
+    expect,
+  };
+}
+
+/**
+ * Whether the dataset block `name` (the first of that name, case-insensitive — the splice's
+ * target) carries comment lines between its fences: a splice rewrites the block and drops them
+ * (`CdtDocument`, PLAN-rule-editor §12).
+ */
+export function blockHasComments(text: string, name: string): boolean {
+  const lines = splitLines(text);
+  const lower = name.toLowerCase();
+  const start = lines.findIndex((l) => {
+    const t = l.trim();
+    return t.startsWith("dataset ") && t.slice(8).trim().split(/\s+/)[0].toLowerCase() === lower;
+  });
+  if (start < 0) return false;
+  let fences = 0;
+  for (let i = start + 1; i < lines.length; i++) {
+    const t = lines[i].trim();
+    if (/^-{3,}$/.test(t)) {
+      if (++fences === 2) return false;
+      continue;
+    }
+    if (t.startsWith("dataset ")) return false;
+    if (t.startsWith("#")) return true;
+  }
+  return false;
+}
+
 function setToken(rest: string, key: string, value: string | null): string {
   const re = new RegExp(`\\s*\\b${key}=("[^"]*"|\\S+)`, "i");
   const token =
@@ -206,7 +306,8 @@ export function newScenarioFromRule(
   datasets: string[],
   columns: string[],
   analysis: AnalysisT | null,
-  expect: "violation" | "no-violation",
+  /** A `RuleTestCdt` token: `noViolation`, never `no-violation` (the parser refuses that). */
+  expect: "violation" | "noViolation",
 ): string {
   const header = [
     "#!RuleTest",

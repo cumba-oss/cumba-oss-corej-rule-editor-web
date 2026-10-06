@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { AnalysisT } from "../api/types";
 import {
+  blockHasComments,
   colLine,
   columnFor,
   datasetText,
   diffLines,
   expectationLines,
+  expectationProposal,
   newScenarioFromRule,
   readExpectations,
+  setTestExpect,
+  testLine,
   scenarioColumns,
   suiteDirOf,
   writeExpectations,
@@ -71,14 +75,14 @@ describe("expectations", () => {
   it("rewrites the header lines in place, keeping everything else", () => {
     const out = writeExpectations(TEXT, {
       ruleId: "CDISC-AD0002",
-      expect: "no-violation",
+      expect: "noViolation",
       domain: null,
       expectViolationCount: 2,
       expectViolationAt: ["variable_name=AETERM"],
     });
     expect(out.split("\n")).toEqual([
       "#!RuleTest",
-      "#test CDISC-AD0002 expect=no-violation",
+      "#test CDISC-AD0002 expect=noViolation",
       '#note "x"',
       "#expectViolationCount 2",
       "#expectViolationAt variable_name=AETERM",
@@ -129,6 +133,123 @@ describe("expectations", () => {
         expectViolationAt: [],
       }),
     ).toBe("#expectViolationCount 1\ndataset D\n");
+  });
+
+  it("keeps CRLF through an in-place rewrite and reads CRLF values without the CR", () => {
+    const text = [
+      "#!RuleTest",
+      "#test R expect=violation domain=AE",
+      "#expectViolationCount 1",
+      "#expectViolationAt AETERM=X",
+      "dataset AE",
+      "col AETERM type=Char",
+      "---",
+      "X",
+      "---",
+      "",
+    ].join("\r\n");
+    const e = readExpectations(text);
+    expect(e).toEqual({
+      ruleId: "R",
+      expect: "violation",
+      domain: "AE",
+      expectViolationCount: 1,
+      expectViolationAt: ["AETERM=X"],
+    });
+    const out = writeExpectations(text, {
+      ...e,
+      expect: "noViolation",
+      expectViolationCount: 2,
+      expectViolationAt: ["AETERM=X", "AETERM=Y"],
+    });
+    expect(out.replace(/\r\n/g, "")).not.toContain("\n");
+    expect(out).toBe(
+      [
+        "#!RuleTest",
+        "#test R expect=noViolation domain=AE",
+        "#expectViolationCount 2",
+        "#expectViolationAt AETERM=X",
+        "#expectViolationAt AETERM=Y",
+        "dataset AE",
+        "col AETERM type=Char",
+        "---",
+        "X",
+        "---",
+        "",
+      ].join("\r\n"),
+    );
+    expect(setTestExpect(text, "skipped")).toBe(text.replace("expect=violation", "expect=skipped"));
+    expect(blockHasComments(text.replace("X\r\n---", "# why\r\nX\r\n---"), "ae")).toBe(true);
+  });
+
+  it("proposes the expectation lines, and the #test line only when expect= changes", () => {
+    const text =
+      "#!RuleTest\n#test R expect=noViolation domain=AE\n#expectViolationCount 0\ndataset AE\n";
+    expect(testLine(text)).toBe("#test R expect=noViolation domain=AE");
+    expect(testLine("dataset AE\n#test R\n")).toBeNull();
+    // the REST app names the new expect= as a field …
+    const viaField = expectationProposal(
+      text,
+      ["#expectViolationCount 1", "#expectViolationAt AETERM=X"],
+      "violation",
+    );
+    expect(viaField).toEqual({
+      current: ["#test R expect=noViolation domain=AE", "#expectViolationCount 0"],
+      proposed: [
+        "#test R expect=violation domain=AE",
+        "#expectViolationCount 1",
+        "#expectViolationAt AETERM=X",
+      ],
+      lines: ["#expectViolationCount 1", "#expectViolationAt AETERM=X"],
+      expect: "violation",
+    });
+    // … or as a #test line among the proposed lines — read the same
+    expect(
+      expectationProposal(text, [
+        "#test R expect=violation",
+        "#expectViolationCount 1",
+        "#expectViolationAt AETERM=X",
+      ]),
+    ).toEqual(viaField);
+    // the same expect= (or none): the #test line is not part of the diff
+    expect(expectationProposal(text, ["#expectViolationCount 0"], "noViolation")).toEqual({
+      current: ["#expectViolationCount 0"],
+      proposed: ["#expectViolationCount 0"],
+      lines: ["#expectViolationCount 0"],
+      expect: null,
+    });
+    // the parser reads the token case-insensitively: the same verdict is no change
+    expect(
+      expectationProposal("#test R expect=noviolation\n", [], "noViolation").expect,
+    ).toBeNull();
+    // a text without a #test line has no line to rewrite
+    expect(expectationProposal("dataset AE\n", [], "violation").expect).toBeNull();
+    expect(setTestExpect("dataset AE\n#test R expect=x\n", "y")).toBe(
+      "dataset AE\n#test R expect=x\n",
+    );
+  });
+
+  it("finds comment lines inside a dataset block only", () => {
+    const text = [
+      "# a prelude comment",
+      "#test R",
+      "dataset AE",
+      "col A type=Char",
+      "---",
+      "a",
+      "# between rows",
+      "---",
+      "dataset DM",
+      "col B type=Char",
+      "---",
+      "b",
+      "---",
+      "# after the blocks",
+    ].join("\n");
+    expect(blockHasComments(text, "AE")).toBe(true);
+    expect(blockHasComments(text, "dm")).toBe(false);
+    expect(blockHasComments(text, "LB")).toBe(false);
+    expect(blockHasComments("dataset AE\ncol A type=Char\ndataset DM\n# x\n", "AE")).toBe(false);
   });
 
   it("diffs expectation lines", () => {
@@ -200,8 +321,8 @@ describe("new scenarios", () => {
         "",
       ].join("\n"),
     );
-    const two = newScenarioFromRule("R", ["AE", "DM"], [], null, "no-violation");
-    expect(two).toContain("#test R expect=no-violation\n");
+    const two = newScenarioFromRule("R", ["AE", "DM"], [], null, "noViolation");
+    expect(two).toContain("#test R expect=noViolation\n");
     expect(two).not.toContain("#expectViolationCount");
     expect(two).toContain("dataset DM\n---\n\n---");
     expect(

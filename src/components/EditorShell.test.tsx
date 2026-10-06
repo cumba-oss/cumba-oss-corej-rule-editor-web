@@ -7,6 +7,10 @@ import { fake } from "../test/handlers";
 import type { SessionInfoT } from "../api/types";
 import { docsPathOf, EditorShell, suggestMessage } from "./EditorShell";
 
+// The longest flows (open → edit → save → push → commit) took 5.1 s against an unchanged HEAD
+// on a loaded host, past vitest's default 5 s; the engine flows already run with 20 s.
+vi.setConfig({ testTimeout: 20_000 });
+
 const RULE = "rules-src/checks/CDISC/CDISC-CG0270.yaml";
 
 function session(mode: SessionInfoT["mode"] = "EDIT"): SessionInfoT {

@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { EditorView } from "@codemirror/view";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { fake } from "../test/handlers";
-import type { ServiceInfoT } from "../api/types";
+import type { RunReportT, ServiceInfoT, SessionInfoT } from "../api/types";
 import { EditorShell } from "./EditorShell";
 
 // These flows wait out the 400 ms analysis debounce several times each; under the parallel
@@ -14,6 +14,21 @@ vi.setConfig({ testTimeout: 20_000 });
 const RULE = "rules-src/checks/CDISC/CDISC-CG0270.yaml";
 const SUITE = "src/test/resources/net/cumba/corej/core/ruletestsuites/cdisc/CDISC-CG0270";
 const INVALID = `${SUITE}/CDISC-CG0270-invalid-AE.cdt`;
+const DOCS = "rules-src/docs/CDISC/CDISC-CG0270.yaml";
+
+/** Let pending promise callbacks (an answer that arrived) run before asserting a non-event. */
+function settle(ms = 150): Promise<void> {
+  return act(() => new Promise<void>((r) => setTimeout(r, ms)));
+}
+
+/** A promise the test resolves: the fake holds its answer until then. */
+function gate(): { promise: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const promise = new Promise<void>((r) => {
+    release = r;
+  });
+  return { promise, release };
+}
 
 function info(engine = fake.engine.info): ServiceInfoT {
   return {
@@ -23,11 +38,14 @@ function info(engine = fake.engine.info): ServiceInfoT {
   };
 }
 
-function renderShell(serviceInfo: ServiceInfoT | null = info()) {
+function renderShell(
+  serviceInfo: ServiceInfoT | null = info(),
+  mode: SessionInfoT["mode"] = "EDIT",
+) {
   return renderWithProviders(
     <EditorShell
       info={serviceInfo}
-      session={{ ...fake.user, mode: "EDIT" }}
+      session={{ ...fake.user, mode }}
       onSession={vi.fn()}
       onLoggedOut={vi.fn()}
     />,
@@ -54,7 +72,8 @@ function appendToBuffer(container: HTMLElement, insert: string) {
 
 /** The scenario row of the Scenarios tab. */
 async function scenarioRow(name: string): Promise<HTMLElement> {
-  return (await screen.findByText(name)).closest("tr")!;
+  const table = await screen.findByRole("table", { name: "scenarios" });
+  return (await within(table).findByText(name)).closest("tr")!;
 }
 
 describe("EditorShell — analysis on change (§5.4)", () => {
@@ -308,7 +327,7 @@ describe("EditorShell — new scenarios (§5.6)", () => {
 });
 
 describe("EditorShell — engine-version banner (O13) and the store notice", () => {
-  it("fires on a mismatch in either direction, not when the branch declares no level", async () => {
+  it("fires on a mismatch in either direction, and for a branch that declares no level", async () => {
     fake.engine.branchLanguageLevel = 2;
     const { unmount } = renderShell(info({ ...fake.engine.info, languageLevel: 1 }));
     expect(await screen.findByText("This branch needs a newer editor")).toBeInTheDocument();
@@ -320,7 +339,16 @@ describe("EditorShell — engine-version banner (O13) and the store notice", () 
       await screen.findByText("This branch predates the engine — update from default"),
     ).toBeInTheDocument();
     second.unmount();
+    // no rules-src/LANGUAGE-LEVEL: level 0, the branch predates the engine (review 8)
     fake.engine.branchLanguageLevel = null;
+    const third = renderShell(info({ ...fake.engine.info, languageLevel: 3 }));
+    expect(
+      await screen.findByText("This branch predates the engine — update from default"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/declares no rule-language level/)).toBeInTheDocument();
+    third.unmount();
+    // agreeing levels: no banner
+    fake.engine.branchLanguageLevel = 3;
     renderShell(info({ ...fake.engine.info, languageLevel: 3 }));
     await screen.findByLabelText("family CDISC");
     expect(screen.queryByRole("alert")).toBeNull();
@@ -342,5 +370,277 @@ describe("EditorShell — engine-version banner (O13) and the store notice", () 
     await openRule(user);
     await waitFor(() => expect(fake.engine.analyses).toHaveLength(1));
     expect(screen.queryByRole("alert")).toBeNull();
+  });
+});
+
+describe("EditorShell — review fold (PLAN-rule-editor web review)", () => {
+  it("binds take-actual-as-expected to the scenario the run ran, not to the selection (review 1)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderShell();
+    await openRule(user);
+    await scenarioRow("CDISC-CG0270-invalid-AE.cdt");
+    fireEvent.keyDown(window, { key: "F5" }); // the default target: invalid-AE
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Results (PASS)" })).toBeInTheDocument(),
+    );
+    // another scenario selected: the report still names its own, and offers nothing to take
+    await user.click(await scenarioRow("CDISC-CG0270-valid-AE.cdt"));
+    await user.click(screen.getByRole("tab", { name: "Results (PASS)" }));
+    expect(screen.getByLabelText("report scenario")).toHaveTextContent(
+      "Scenario CDISC-CG0270-invalid-AE.cdt — not the selected scenario (CDISC-CG0270-valid-AE.cdt)",
+    );
+    expect(screen.queryByRole("button", { name: "Take actual as expected" })).toBeNull();
+
+    // back on the scenario it ran: the proposal writes THAT buffer, the other stays untouched
+    await user.click(screen.getByRole("tab", { name: /^Scenarios/ }));
+    await user.click(await scenarioRow("CDISC-CG0270-invalid-AE.cdt"));
+    await user.click(screen.getByRole("tab", { name: "Results (PASS)" }));
+    expect(screen.getByLabelText("report scenario")).toHaveTextContent(
+      "Scenario CDISC-CG0270-invalid-AE.cdt",
+    );
+    fake.engine.nextReport = null;
+    await user.click(screen.getByRole("button", { name: "Take actual as expected" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Take actual as expected — CDISC-CG0270-invalid-AE.cdt");
+    // the fake proposes exactly what the scenario holds: nothing to write
+    expect(within(dialog).getByRole("button", { name: "Write into the buffer" })).toBeDisabled();
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("tab", { name: "CDISC-CG0270-valid-AE.cdt" })).toBeNull();
+    expect(mainView(container).state.doc.toString()).toBe(fake.files.get(INVALID)!.content);
+  });
+
+  it("shows the #test expect= rewrite in the diff and writes it with the lines (REST fold)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderShell();
+    await openRule(user);
+    await user.click(await scenarioRow("CDISC-CG0270-valid-AE.cdt"));
+    // the valid scenario expects no violation; the run finds one and proposes expect=violation
+    fake.engine.nextReport = {
+      expectations: {
+        count: 1,
+        ats: 1,
+        lines: ["#expectViolationCount 1", "#expectViolationAt AETERM=HEADACHE"],
+        expect: "violation",
+      } as NonNullable<RunReportT["expectations"]>,
+    };
+    fireEvent.keyDown(window, { key: "F5" });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Results (FAIL)" })).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("tab", { name: "Results (FAIL)" }));
+    await user.click(screen.getByRole("button", { name: "Take actual as expected" }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByLabelText("expectation diff").textContent).toBe(
+      [
+        "- #test CDISC-CG0270 expect=noViolation domain=AE",
+        "+ #test CDISC-CG0270 expect=violation domain=AE",
+        "+ #expectViolationCount 1",
+        "+ #expectViolationAt AETERM=HEADACHE",
+      ].join(""),
+    );
+    await user.click(within(dialog).getByRole("button", { name: "Write into the buffer" }));
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "CDISC-CG0270-valid-AE.cdt" })).toHaveTextContent("●"),
+    );
+    expect(mainView(container).state.doc.toString()).toBe(
+      "#!RuleTest\n#test CDISC-CG0270 expect=violation domain=AE\n#expectViolationCount 1\n#expectViolationAt AETERM=HEADACHE\ndataset AE\ncol AETERM type=Char\n---\nx\n---\n",
+    );
+  });
+
+  it("hides a report of another branch (review 1)", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await openRule(user);
+    await scenarioRow("CDISC-CG0270-invalid-AE.cdt");
+    fireEvent.keyDown(window, { key: "F5" });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Results (PASS)" })).toBeInTheDocument(),
+    );
+    await user.click(screen.getByRole("button", { name: "branch" }));
+    await user.click(await screen.findByLabelText("switch to feature/other"));
+    await waitFor(() => expect(fake.branch).toBe("feature/other"));
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "branch" })).toHaveTextContent("feature/other"),
+    );
+    // the switch closed every tab; open the rule again (its family may still be expanded)
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    if (!screen.queryByLabelText("rule CDISC-CG0270")) {
+      await user.click(await screen.findByLabelText("family CDISC"));
+    }
+    await user.click(await screen.findByLabelText("rule CDISC-CG0270"));
+    await screen.findByRole("tab", { name: "CDISC-CG0270.yaml" });
+    await scenarioRow("CDISC-CG0270-invalid-AE.cdt");
+    expect(screen.getByRole("tab", { name: "Results" })).toBeInTheDocument();
+    expect(screen.queryByRole("tab", { name: /Results \(/ })).toBeNull();
+    expect(await scenarioRow("CDISC-CG0270-invalid-AE.cdt")).toHaveTextContent("not run");
+  });
+
+  it("drops an analysis answer for an edit undone before it arrived (review 3a)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderShell();
+    await openRule(user);
+    await waitFor(() => expect(fake.engine.analysesAnswered).toBe(1));
+    await user.click(screen.getByRole("tab", { name: /^Problems/ }));
+    await screen.findByText("Analysed.");
+    const view = mainView(container);
+    const analysed = view.state.doc.toString();
+    const held = gate();
+    fake.engine.holdAnalyse = held.promise;
+    appendToBuffer(container, "Check:\n  expression: a BAD\n");
+    await waitFor(() => expect(fake.engine.analyses).toHaveLength(2), { timeout: 3000 });
+    // undo before the answer: the buffer is the analysed content again
+    act(() => {
+      view.dispatch({ changes: { from: analysed.length, to: view.state.doc.length } });
+    });
+    expect(view.state.doc.toString()).toBe(analysed);
+    held.release();
+    await waitFor(() => expect(fake.engine.analysesAnswered).toBe(2));
+    await settle();
+    // the answer for the undone edit did not land: still analysed, no BAD marker, no new request
+    expect(screen.getByText("Analysed.")).toBeInTheDocument();
+    expect(screen.queryByText("Analysing…")).toBeNull();
+    expect(screen.getByRole("tab", { name: "Problems" })).toBeInTheDocument();
+    expect(container.querySelector(".cm-lintRange-error")).toBeNull();
+    expect(fake.engine.analyses).toHaveLength(2);
+  });
+
+  it("keeps the markers on their text while an analysis is pending (review 3b)", async () => {
+    const user = userEvent.setup();
+    fake.files.set(RULE, {
+      content: 'Core:\n  Id: "CDISC-CG0270"\nCheck:\n  expression: a BAD\n',
+      blob: "b270",
+    });
+    const { container } = renderShell();
+    await openRule(user);
+    await waitFor(() =>
+      expect(container.querySelector(".cm-lintRange-error")?.textContent).toBe("BAD"),
+    );
+    const held = gate();
+    fake.engine.holdAnalyse = held.promise;
+    const view = mainView(container);
+    act(() => {
+      view.dispatch({ changes: { from: 0, insert: "# one\n# two\n" } });
+    });
+    await waitFor(() => expect(fake.engine.analyses).toHaveLength(2), { timeout: 3000 });
+    // past the lint pass (750 ms after the edit): the marker moved WITH its text
+    await settle(900);
+    expect(container.querySelector(".cm-lintRange-error")?.textContent).toBe("BAD");
+    await user.click(screen.getByRole("tab", { name: /^Problems/ }));
+    expect(screen.getByText(/stale until the new one is in/)).toBeInTheDocument();
+    held.release();
+    await waitFor(() => expect(screen.getByText("The rule does not load.")).toBeInTheDocument());
+    expect(screen.queryByText(/stale until the new one is in/)).toBeNull();
+    expect(container.querySelector(".cm-lintRange-error")?.textContent).toBe("BAD");
+  });
+
+  it("analyses a docs tab whose rule is not open, with the rule as saved (review 4)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderShell();
+    await openRule(user);
+    await user.click(screen.getByRole("button", { name: "Open docs" }));
+    await screen.findByRole("tab", { name: "CDISC-CG0270.yaml (docs)" });
+    // close the rule tab: the docs tab is left alone
+    await user.click(screen.getByLabelText("close CDISC-CG0270.yaml"));
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: "CDISC-CG0270.yaml" })).toBeNull(),
+    );
+    const before = fake.engine.analyses.length;
+    appendToBuffer(container, "# DOCBAD\n");
+    await waitFor(() => expect(fake.engine.analyses.length).toBe(before + 1), { timeout: 3000 });
+    expect(fake.engine.analyses.at(-1)).toEqual({
+      path: RULE,
+      content: fake.files.get(RULE)!.content,
+      docs: fake.files.get(DOCS)!.content + "# DOCBAD\n",
+    });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Problems (1)" })).toBeInTheDocument(),
+    );
+    await waitFor(() => expect(container.querySelector(".cm-lintRange-error")).not.toBeNull());
+  });
+
+  it("says a lone docs tab is not analysed when its rule cannot be read (review 4)", async () => {
+    const user = userEvent.setup();
+    renderShell();
+    await openRule(user);
+    await user.click(screen.getByRole("button", { name: "Open docs" }));
+    await screen.findByRole("tab", { name: "CDISC-CG0270.yaml (docs)" });
+    fake.files.delete(RULE);
+    await user.click(screen.getByLabelText("close CDISC-CG0270.yaml"));
+    await user.click(screen.getByRole("tab", { name: /^Problems/ }));
+    expect(
+      await screen.findByText("Not analysed — open the rule to analyse it."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("No problems.")).toBeNull();
+  });
+
+  it("runs, analyses and proposes expectations in read-only mode without writing (O12)", async () => {
+    const user = userEvent.setup();
+    fake.mode = "READ_ONLY";
+    const { container } = renderShell(info(), "READ_ONLY");
+    await openRule(user);
+    await waitFor(() => expect(fake.engine.analyses).toHaveLength(1));
+    await scenarioRow("CDISC-CG0270-invalid-AE.cdt");
+    appendToBuffer(container, "# edited, never saved\n");
+    fireEvent.keyDown(window, { key: "F5" });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Results (PASS)" })).toBeInTheDocument(),
+    );
+    expect(fake.engine.runs[0].content).toContain("# edited, never saved\n");
+    fake.engine.nextReport = {
+      expectations: { count: 0, ats: 0, lines: ["#expectViolationCount 2"] },
+    };
+    fireEvent.keyDown(window, { key: "F5" });
+    await waitFor(() => expect(fake.engine.runs).toHaveLength(2));
+    await user.click(await screen.findByRole("tab", { name: "Results (PASS)" }));
+    await user.click(await screen.findByRole("button", { name: "Take actual as expected" }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Write into the buffer" }));
+    await waitFor(() =>
+      expect(mainView(container).state.doc.toString()).toContain("#expectViolationCount 2\n"),
+    );
+    expect(fake.mutations.filter((m) => m.method === "PUT")).toHaveLength(0);
+  });
+
+  it("reloads the suite after any scenario save, and the caches after an update (review 9)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderShell();
+    await openRule(user);
+    await user.dblClick(await scenarioRow("CDISC-CG0270-invalid-AE.cdt"));
+    await screen.findByRole("tab", { name: "CDISC-CG0270-invalid-AE.cdt" });
+    const view = mainView(container);
+    act(() => {
+      const text = view.state.doc.toString();
+      const at = text.indexOf("#expectViolationCount 1");
+      view.dispatch({
+        changes: {
+          from: at,
+          to: at + "#expectViolationCount 1".length,
+          insert: "#expectViolationCount 3",
+        },
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "Save (Ctrl+S)" }));
+    await screen.findByText("Saved — push now?");
+    await user.click(screen.getByRole("button", { name: "Later" }));
+    await waitFor(async () =>
+      expect(await scenarioRow("CDISC-CG0270-invalid-AE.cdt")).toHaveTextContent("3 (+1 at)"),
+    );
+
+    // an update from the remote branch changes the files under the cache: the suite re-reads
+    const merged = fake.files.get(INVALID)!;
+    fake.files.set(INVALID, {
+      ...merged,
+      content: merged.content.replace("#expectViolationCount 3", "#expectViolationCount 5"),
+    });
+    fake.unpushedCommits = [{ sha: "c9", message: "m", author: "a" }];
+    fake.nextPushProblem = { status: 409, code: "NON_FAST_FORWARD" };
+    await user.click(await screen.findByRole("button", { name: /Commit \+ Push/ }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: /^(Commit \+ Push|Push)$/ }));
+    await user.click(await screen.findByRole("button", { name: "Update from remote branch" }));
+    await waitFor(() => expect(fake.head).toBe("merged44"));
+    await waitFor(async () =>
+      expect(await scenarioRow("CDISC-CG0270-invalid-AE.cdt")).toHaveTextContent("5 (+1 at)"),
+    );
   });
 });

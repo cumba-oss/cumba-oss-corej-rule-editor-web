@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { describe, expect, it, vi } from "vitest";
-import { screen, waitFor, within } from "@testing-library/react";
+import { act, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { fake } from "../test/handlers";
@@ -47,6 +47,36 @@ function ScenarioEditorState({
   );
 }
 
+/** The harness plus a button that changes the text from outside (take-as-expected, say). */
+function PokeHarness({ initial, onChange }: { initial: string; onChange: (c: string) => void }) {
+  const [content, setContent] = useState(initial);
+  const set = (c: string) => {
+    setContent(c);
+    onChange(c);
+  };
+  return (
+    <>
+      <button type="button" onClick={() => set(content.replace("domain=AE", "domain=CM"))}>
+        poke
+      </button>
+      <ScenarioEditor
+        tab={tab(content)}
+        onChange={set}
+        onSave={vi.fn()}
+        analysis={fake.engine.analyse('Core:\n  Id: "X"\n')}
+      />
+    </>
+  );
+}
+
+function gate(): { promise: Promise<void>; release: () => void } {
+  let release!: () => void;
+  const promise = new Promise<void>((r) => {
+    release = r;
+  });
+  return { promise, release };
+}
+
 describe("isMissing", () => {
   it("recognises the parser's missing sentinels only", () => {
     for (const s of [".", "._", ".A", ".Z"]) expect(isMissing(s)).toBe(true);
@@ -64,6 +94,15 @@ describe("ScenarioEditor — expectations header", () => {
     expect(screen.getByLabelText("expectViolationCount")).toHaveValue("1");
     expect(screen.getByLabelText("expectViolationAt 1")).toHaveValue("AETERM=HEADACHE");
 
+    // the header offers exactly the parser's expect= tokens (RuleTestScenario.Verdict)
+    await user.click(screen.getAllByLabelText("expect").find((e) => e.tagName === "INPUT")!);
+    expect((await screen.findAllByRole("option")).map((o) => o.textContent)).toEqual([
+      "violation",
+      "noViolation",
+      "skipped",
+      "executionError",
+    ]);
+    await user.keyboard("{Escape}");
     await user.clear(screen.getByLabelText("domain"));
     await user.type(screen.getByLabelText("domain"), "CM");
     expect(onChange.mock.calls.at(-1)![0]).toContain(
@@ -76,8 +115,14 @@ describe("ScenarioEditor — expectations header", () => {
       "#expectViolationCount 2\n#expectViolationAt AETERM=HEADACHE\n",
     );
 
+    // a new line is written only once it has text (review 10): the + alone writes nothing
+    const calls = onChange.mock.calls.length;
     await user.click(screen.getByRole("button", { name: "+ #expectViolationAt" }));
+    expect(onChange.mock.calls).toHaveLength(calls);
     await user.type(screen.getByLabelText("expectViolationAt 2"), "AESEQ=2");
+    expect(onChange.mock.calls).toHaveLength(calls);
+    await user.keyboard("{Enter}");
+    expect(onChange.mock.calls).toHaveLength(calls + 1);
     expect(onChange.mock.calls.at(-1)![0]).toContain(
       "#expectViolationAt AETERM=HEADACHE\n#expectViolationAt AESEQ=2\ndataset AE",
     );
@@ -193,5 +238,119 @@ describe("ScenarioEditor — grid", () => {
     renderWithProviders(<Harness initial={"#test X\n"} onChange={vi.fn()} />);
     await user.click(screen.getAllByRole("radio", { name: "Grid" })[1]);
     expect(await screen.findByText(/No dataset block yet/)).toBeInTheDocument();
+  });
+});
+
+describe("ScenarioEditor — splices in flight (review 2, 6, 10)", () => {
+  it("blocks the grid while a splice is in flight and drops an answer for text that changed meanwhile", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderWithProviders(<PokeHarness initial={tab().content} onChange={onChange} />);
+    await user.click(screen.getByRole("radio", { name: "Grid" }));
+    const grid = await screen.findByRole("table", { name: "grid AE" });
+    const held = gate();
+    fake.engine.holdSplice = held.promise;
+    const cell = within(grid).getByLabelText("AETERM row 1");
+    await user.clear(cell);
+    await user.type(cell, "NAUSEA{Enter}");
+    await waitFor(() => expect(fake.engine.splices).toHaveLength(1));
+    // serialized: while it is in flight the grid takes no second edit
+    expect(await screen.findByText("Writing the grid edit…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "+ row" })).toBeDisabled();
+    expect(within(grid).getByLabelText("AESEQ row 1")).toHaveAttribute("readonly");
+    await user.click(screen.getByLabelText("remove row 2"));
+    expect(fake.engine.splices).toHaveLength(1);
+    // the text changes under it (a write from elsewhere): the answer must not land on it
+    await user.click(screen.getByRole("button", { name: "poke" }));
+    const poked = onChange.mock.calls.at(-1)![0] as string;
+    expect(poked).toContain("domain=CM");
+    held.release();
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Not written: the text changed while the grid edit was written",
+    );
+    expect(onChange.mock.calls.at(-1)![0]).toBe(poked);
+    // and the grid takes edits again once the new text is parsed
+    await waitFor(() => expect(screen.getByRole("button", { name: "+ row" })).toBeEnabled());
+  });
+
+  it("keeps the grid mounted and the focus where it was across a splice", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderWithProviders(<Harness initial={tab().content} onChange={onChange} />);
+    await user.click(screen.getByRole("radio", { name: "Grid" }));
+    const grid = await screen.findByRole("table", { name: "grid AE" });
+    const cell = within(grid).getByLabelText("AETERM row 1");
+    await user.clear(cell);
+    await user.type(cell, "NAUSEA");
+    await user.tab(); // commits AETERM, moves to AESEQ
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    await waitFor(() =>
+      expect(screen.queryByText(/Re-reading the text|Writing the grid/)).toBeNull(),
+    );
+    const next = within(screen.getByRole("table", { name: "grid AE" })).getByLabelText(
+      "AESEQ row 1",
+    );
+    expect(next).toHaveFocus();
+    expect(
+      within(screen.getByRole("table", { name: "grid AE" })).getByLabelText("AETERM row 1"),
+    ).toHaveValue("NAUSEA");
+  });
+
+  it("asks once before the first splice of a block that carries comments (review 6)", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const commented = tab().content.replace("01-701-1016 | . | 2", "# a note\n01-701-1016 | . | 2");
+    renderWithProviders(<Harness initial={commented} onChange={onChange} />);
+    await user.click(screen.getByRole("radio", { name: "Grid" }));
+    await screen.findByRole("table", { name: "grid AE" });
+    await user.click(screen.getByRole("button", { name: "+ row" }));
+    const dialog = await screen.findByRole("dialog", { name: "Rewrite dataset AE?" });
+    await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
+    expect(fake.engine.splices).toHaveLength(0);
+    expect(onChange).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "+ row" }));
+    await user.click(
+      within(await screen.findByRole("dialog", { name: "Rewrite dataset AE?" })).getByRole(
+        "button",
+        { name: "Rewrite without the comments" },
+      ),
+    );
+    await waitFor(() => expect(fake.engine.splices).toHaveLength(1));
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    expect(onChange.mock.calls.at(-1)![0]).not.toContain("# a note");
+    // the DM block carries none: no question
+    await user.click(screen.getByRole("tab", { name: "DM" }));
+    const dm = await screen.findByRole("table", { name: "grid DM" });
+    await waitFor(() =>
+      expect(
+        within(screen.getByRole("tabpanel", { name: "DM" })).getByRole("button", { name: "+ row" }),
+      ).toBeEnabled(),
+    );
+    await user.click(
+      within(screen.getByRole("tabpanel", { name: "DM" })).getByRole("button", { name: "+ row" }),
+    );
+    await waitFor(() => expect(fake.engine.splices).toHaveLength(2));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(dm).toBeInTheDocument();
+  });
+
+  it("drops what is typed after Escape instead of committing it unseen (review 10)", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    renderWithProviders(<Harness initial={tab().content} onChange={onChange} />);
+    await user.click(screen.getByRole("radio", { name: "Grid" }));
+    const grid = await screen.findByRole("table", { name: "grid AE" });
+    const cell = within(grid).getByLabelText("AESEQ row 1");
+    await user.click(cell);
+    await user.keyboard("9{Escape}");
+    expect(cell).toHaveValue("1");
+    expect(cell).not.toHaveFocus();
+    act(() => cell.blur());
+    expect(fake.engine.splices).toHaveLength(0);
+    // a fresh edit after Escape starts from the cell's value and commits what is shown
+    await user.click(cell);
+    await user.keyboard("2{Enter}");
+    await waitFor(() => expect(fake.engine.splices).toHaveLength(1));
+    expect(fake.engine.splices[0].rows![0]).toEqual(["01-701-1015", "HEADACHE", "12"]);
   });
 });

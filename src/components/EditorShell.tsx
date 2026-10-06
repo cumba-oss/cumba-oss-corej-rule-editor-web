@@ -11,12 +11,13 @@ import type {
   SessionInfoT,
   StatusT,
 } from "../api/types";
-import { expectationLines } from "../engine/cdt";
+import { expectationProposal, readExpectations, setTestExpect } from "../engine/cdt";
 import { markersOf, rangeOf } from "../engine/diagnostics";
 import {
   docsPathFor,
   rulePathOf,
   statusOf,
+  type RunEntry,
   useAnalyses,
   useCatalogues,
   useRelated,
@@ -121,7 +122,8 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
   const [newRuleFamily, setNewRuleFamily] = useState<string | null>(null);
   const [showAuthorities, setShowAuthorities] = useState(false);
   const [newScenario, setNewScenario] = useState<NewScenarioRequest | null>(null);
-  const [takeExpected, setTakeExpected] = useState(false);
+  /** The run the "take actual as expected" dialog is about: its scenario, branch and report. */
+  const [takeExpected, setTakeExpected] = useState<RunEntry | null>(null);
   const [selectedScenarios, setSelectedScenarios] = useState<Record<string, string>>({});
   const [reveal, setReveal] = useState<{ path: string; d: DiagnosticT; seq: number } | null>(null);
 
@@ -177,8 +179,20 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
   // ---- the engine (phase 3) ------------------------------------------------------------------
 
   const epoch = status?.branch ?? "";
-  const { byPath: analyses, retry: retryAnalysis } = useAnalyses(tabs.tabs, current, epoch);
-  const catalogues = useCatalogues(epoch, true);
+  /**
+   * Bumped when the workspace changes under the caches without a branch switch (update from the
+   * remote branch, a discard): the suite, related-rule, schema and function caches reload (review 9).
+   */
+  const [cacheGen, setCacheGen] = useState(0);
+  const cacheKey = `${epoch}\u0000${cacheGen}`;
+  const invalidateCaches = useCallback(() => setCacheGen((n) => n + 1), []);
+  const {
+    byPath: analyses,
+    retry: retryAnalysis,
+    target: analysisTarget,
+    forgetDisk,
+  } = useAnalyses(tabs.tabs, current, epoch, cacheKey);
+  const catalogues = useCatalogues(cacheKey, true);
   /** The rule the panel and the run are about: the active rule / docs tab's, or a scenario's. */
   const ruleId = current
     ? (ruleIdOf(rulePathOf(current) ?? "") ?? scenarioRuleIdOf(current.path))
@@ -187,11 +201,16 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
   const ruleTab = rulePath ? tabs.tabs.find((t) => t.path === rulePath) : undefined;
   const docsTab = rulePath ? tabs.tabs.find((t) => t.path === docsPathFor(rulePath)) : undefined;
   const analysisEntry = rulePath ? analyses[rulePath] : undefined;
-  const analysisStatus = ruleTab ? statusOf(analysisEntry, ruleTab.content) : "none";
+  // The status describes what the active rule / docs tab shows: the buffers analysed (a lone docs
+  // tab's rule as saved). A scenario tab has no analysis of its own.
+  const analysisStatus =
+    analysisTarget && analysisTarget.rulePath === rulePath
+      ? statusOf(analysisEntry, analysisTarget.content, analysisTarget.docs)
+      : "none";
   const analysis = analysisEntry?.analysis ?? null;
-  const { entry: related } = useRelated(ruleId, epoch);
-  const { entry: suite, reload: reloadSuite } = useSuite(ruleId, epoch);
-  const runs = useRuns();
+  const { entry: related } = useRelated(ruleId, cacheKey);
+  const { entry: suite, reload: reloadSuite } = useSuite(ruleId, cacheKey);
+  const runs = useRuns(epoch);
   const scenarios = suite?.value?.scenarios ?? [];
   const selectedScenario =
     (ruleId && selectedScenarios[ruleId]) ||
@@ -201,7 +220,11 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
   const scenarioTab = selectedScenario
     ? tabs.tabs.find((t) => t.path === selectedScenario)
     : undefined;
-  const report = rulePath ? runs.reports[rulePath] : undefined;
+  /** The rule's last run on this branch, bound to the scenario it ran (review 1). */
+  const runEntry = rulePath ? runs.reports[rulePath] : undefined;
+  const report = runEntry?.report;
+  /** The report describes the selected scenario: only then can its expectations be taken. */
+  const reportCurrent = !!runEntry && runEntry.scenarioPath === selectedScenario;
   const runError = rulePath ? runs.errors[rulePath] : undefined;
   const canRun = !!ruleTab && !!selectedScenario && !runs.busy;
 
@@ -223,14 +246,22 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
     () => ({ derived: analysis?.derived ?? null, status: analysisStatus, showAuthorities }),
     [analysis, analysisStatus, showAuthorities],
   );
+  /**
+   * The lint markers of the active tab — only from a FRESH analysis of exactly this buffer. While
+   * an analysis is pending or failed the answer's lines describe other text, so `null` leaves the
+   * editor's own set alone (CodeMirror maps it through the edits) instead of re-placing old
+   * ranges on new lines (review 3b).
+   */
   const markers = useMemo(() => {
-    if (!current || !analysis) return [];
-    if (current.kind === "rule")
-      return markersOf(current.content, analysis.diagnostics ?? [], "CHECK");
-    if (current.kind === "docs")
-      return markersOf(current.content, analysis.diagnostics ?? [], "DOCS");
-    return [];
-  }, [current, analysis]);
+    if (!current || (current.kind !== "rule" && current.kind !== "docs")) return [];
+    if (analysisStatus === "pending" || analysisStatus === "failed") return null;
+    if (!analysis) return [];
+    return markersOf(
+      current.content,
+      analysis.diagnostics ?? [],
+      current.kind === "rule" ? "CHECK" : "DOCS",
+    );
+  }, [current, analysis, analysisStatus]);
 
   // ---- open / close -------------------------------------------------------------------------
 
@@ -349,29 +380,62 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  /** The diff dialog of "take actual as expected" — over the scenario's BUFFER, so open it first. */
+  /**
+   * The diff dialog of "take actual as expected" — over the BUFFER of the scenario the report ran
+   * (never merely the selected one), so that tab is opened first. A report of another scenario or
+   * branch is refused (review 1).
+   */
   async function requestTakeExpected() {
-    if (!selectedScenario) return;
-    await openPath(selectedScenario);
-    setTakeExpected(true);
+    if (!runEntry || !reportCurrent || runEntry.branch !== epoch) {
+      notifications.show({
+        color: "orange",
+        title: "Take actual as expected",
+        message: "The report is not the selected scenario's — run it first.",
+      });
+      return;
+    }
+    await openPath(runEntry.scenarioPath);
+    setTakeExpected(runEntry);
   }
 
-  /** Confirmed: rewrite the scenario buffer's expectation lines (never automatic). */
+  const takeTab = takeExpected
+    ? tabs.tabs.find((t) => t.path === takeExpected.scenarioPath)
+    : undefined;
+  const proposal =
+    takeExpected && takeTab
+      ? expectationProposal(
+          takeTab.content,
+          takeExpected.report.expectations?.lines ?? [],
+          proposedExpect(takeExpected.report),
+        )
+      : null;
+
+  /** Confirmed: rewrite the expectation lines of the report's scenario buffer (never automatic). */
   async function writeExpectationsIntoBuffer() {
-    const lines = report?.expectations?.lines ?? [];
-    if (!selectedScenario || !scenarioTab) return;
-    const r = await editor.cdtExpectations(scenarioTab.content, lines);
-    setTakeExpected(false);
+    const target = takeExpected;
+    setTakeExpected(null);
+    if (!target || !takeTab || !proposal) return;
+    if (target.branch !== epoch || runs.reports[rulePath ?? ""] !== target) {
+      notifications.show({
+        color: "orange",
+        title: "Take actual as expected",
+        message: "The run is no longer current — nothing was written. Run the scenario again.",
+      });
+      return;
+    }
+    const before = takeTab.content;
+    const r = await editor.cdtExpectations(before, proposal.lines);
     if (r.problem) {
       notifyProblem("Take actual as expected", r.problem);
       return;
     }
+    const written = r.data.content ?? before;
     dispatch({
       type: "edit",
-      path: selectedScenario,
-      content: r.data.content ?? scenarioTab.content,
+      path: target.scenarioPath,
+      content: proposal.expect ? setTestExpect(written, proposal.expect) : written,
     });
-    dispatch({ type: "activate", path: selectedScenario });
+    dispatch({ type: "activate", path: target.scenarioPath });
   }
 
   /** Clone copies the source's BUFFER, so the source tab is opened first. */
@@ -416,10 +480,12 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
         dispatch({ type: "saved", path, blob: r.data.blob ?? "" });
         await refreshStatus();
         void refreshTree();
-        if (tab.kind === "scenario" && tab.blob === null) {
+        // the suite rows show the saved scenarios' expectations, so any scenario save reloads it
+        if (tab.kind === "scenario") {
           const id = scenarioRuleIdOf(path);
           if (id) reloadSuite(id);
         }
+        if (tab.kind === "rule") forgetDisk(path);
         setPushNowFor(path);
         return;
       }
@@ -464,6 +530,7 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
       refreshStatus,
       refreshTree,
       reloadSuite,
+      forgetDisk,
       setPushNowFor,
       setReauthRetry,
       setBranchOpen,
@@ -531,12 +598,13 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
         }
         await refreshStatus();
         void refreshTree();
+        invalidateCaches();
         notifications.show({ color: "green", title, message: `${r.data.merge?.status ?? "done"}` });
         return true;
       };
       return retry();
     },
-    [expect, uncommitted, refreshStatus, refreshTree],
+    [expect, uncommitted, refreshStatus, refreshTree, invalidateCaches],
   );
 
   // ---- branches -----------------------------------------------------------------------------
@@ -681,6 +749,7 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
     await reloadDiscarded((r.data.discarded ?? []).map((f) => f.path ?? ""));
     await refreshStatus();
     void refreshTree();
+    invalidateCaches();
     const retry = dirtyTree.retry;
     setDirtyTree(null);
     void retry();
@@ -734,7 +803,10 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
         />
       </AppShell.Navbar>
       <AppShell.Main h="100vh" style={{ display: "flex", flexDirection: "column" }}>
-        <EngineBanner engine={info?.engine} branchLevel={tree?.languageLevel ?? null} />
+        <EngineBanner
+          engine={info?.engine}
+          branchLevel={tree ? (tree.languageLevel ?? null) : undefined}
+        />
         <EditorTabs
           tabs={tabs.tabs}
           active={tabs.active}
@@ -838,6 +910,8 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
             onNewScenario={(mode, source) => void requestNewScenario(mode, source)}
             lastRuns={runs.lastRuns}
             report={report}
+            reportScenario={runEntry?.scenarioPath}
+            reportCurrent={reportCurrent}
             runError={runError}
             runBusy={runs.busy}
             canRun={canRun}
@@ -944,12 +1018,12 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
         onCancel={() => setNewScenario(null)}
       />
       <TakeExpectedDialog
-        opened={takeExpected}
-        scenarioName={selectedScenario?.slice(selectedScenario.lastIndexOf("/") + 1) ?? ""}
-        current={scenarioTab ? expectationLines(scenarioTab.content) : []}
-        proposed={report?.expectations?.lines ?? []}
+        opened={takeExpected !== null && proposal !== null}
+        scenarioName={nameOf(takeExpected?.scenarioPath ?? "")}
+        current={proposal?.current ?? []}
+        proposed={proposal?.proposed ?? []}
         onConfirm={() => void writeExpectationsIntoBuffer()}
-        onCancel={() => setTakeExpected(false)}
+        onCancel={() => setTakeExpected(null)}
       />
       <CloseDirtyTabDialog
         path={closingDirty}
@@ -961,6 +1035,21 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
       />
     </AppShell>
   );
+}
+
+/** The file name of a path. */
+function nameOf(path: string): string {
+  return path.slice(path.lastIndexOf("/") + 1);
+}
+
+/**
+ * The `expect=` a run proposes for its scenario (REST fold: `expectations.expect`, or the token
+ * of `expectations.testLine`); read behind a guard so a report without them proposes none.
+ */
+function proposedExpect(report: RunEntry["report"]): string | null {
+  const e = report.expectations as Record<string, unknown> | undefined;
+  if (typeof e?.expect === "string" && e.expect) return e.expect;
+  return typeof e?.testLine === "string" ? readExpectations(e.testLine).expect : null;
 }
 
 /** The docs sidecar of a check path, from the Explorer tree (RE-Q3: opens as its own tab). */

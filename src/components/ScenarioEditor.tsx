@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   ActionIcon,
   Autocomplete,
@@ -20,7 +20,13 @@ import {
 } from "@mantine/core";
 import { cdtParse, cdtSplice } from "../api/editor";
 import type { AnalysisT, ColumnT, DatasetT, ParsedT } from "../api/types";
-import { columnFor, readExpectations, writeExpectations, type Expectations } from "../engine/cdt";
+import {
+  blockHasComments,
+  columnFor,
+  readExpectations,
+  writeExpectations,
+  type Expectations,
+} from "../engine/cdt";
 import type { Tab } from "../state/tabs";
 import { CodeEditor } from "./CodeEditor";
 
@@ -40,16 +46,34 @@ export function isMissing(cell: string): boolean {
 /**
  * A scenario tab (PLAN-rule-editor §5.6): two views of one document, the text being the truth.
  * The Grid view is one sub-tab per dataset block (`POST /api/cdt/parse`); every grid edit is a
- * `POST /api/cdt/splice` of the current text — a `CDT_UNREPRESENTABLE` answer is shown and
- * nothing changes. The expectations header edits the `#test … expect=`, `#expectViolationCount`
- * and `#expectViolationAt` lines in place.
+ * `POST /api/cdt/splice` of the text the grid was parsed from — a `CDT_UNREPRESENTABLE` answer is
+ * shown and nothing changes. The expectations header edits the `#test … expect=`,
+ * `#expectViolationCount` and `#expectViolationAt` lines in place.
+ *
+ * Splices are serialized (review 2): while one is in flight, or while the grid shows a parse of
+ * older text, the grid and the header are read-only; an answer is applied only when the text is
+ * still the one it was computed from. The previous parse stays mounted (dimmed) while the new text
+ * is parsed, so focus and the active block survive an edit. The first splice of a block that
+ * carries comment lines asks first — a splice drops them (`CdtDocument`, §12).
  */
 export function ScenarioEditor({ tab, onChange, onSave, analysis }: Props) {
   const [view, setView] = useState<"text" | "grid">("text");
   const [parsed, setParsed] = useState<{ forContent: string; value: ParsedT } | null>(null);
   const [spliceError, setSpliceError] = useState<string | null>(null);
+  const [splicing, setSplicing] = useState(false);
+  const [askComments, setAskComments] = useState<{
+    name: string;
+    resolve: (ok: boolean) => void;
+  } | null>(null);
   const content = tab.content;
-  const current = parsed && parsed.forContent === content ? parsed.value : null;
+  const contentRef = useRef(content);
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+  const splicingRef = useRef(false);
+  /** Blocks whose comment loss the user accepted, in this tab. */
+  const commentsAccepted = useRef(new Set<string>());
+  const fresh = parsed !== null && parsed.forContent === content;
 
   useEffect(() => {
     if (view !== "grid") return undefined;
@@ -66,29 +90,76 @@ export function ScenarioEditor({ tab, onChange, onSave, analysis }: Props) {
     };
   }, [view, content]);
 
-  async function splice(dataset: DatasetT): Promise<void> {
-    const r = await cdtSplice(content, dataset);
-    if (r.problem) {
-      setSpliceError(`${r.problem.detail} (${r.problem.code})`);
-      return;
+  function confirmComments(name: string): Promise<boolean> {
+    const key = name.toLowerCase();
+    if (commentsAccepted.current.has(key) || !blockHasComments(contentRef.current, name)) {
+      return Promise.resolve(true);
     }
-    setSpliceError(null);
-    if (r.data.content !== undefined && r.data.content !== content) onChange(r.data.content);
+    return new Promise((resolve) =>
+      setAskComments({
+        name,
+        resolve: (ok) => {
+          setAskComments(null);
+          if (ok) commentsAccepted.current.add(key);
+          resolve(ok);
+        },
+      }),
+    );
+  }
+
+  /** Splice `dataset` into `base` — the text the grid was parsed from. */
+  async function splice(dataset: DatasetT, base: string): Promise<void> {
+    if (splicingRef.current) return;
+    splicingRef.current = true;
+    setSplicing(true);
+    try {
+      if (!(await confirmComments(dataset.name ?? ""))) return;
+      if (contentRef.current !== base) {
+        setSpliceError("the text changed before the grid edit was sent — redo it on the new grid");
+        return;
+      }
+      const r = await cdtSplice(base, dataset);
+      if (r.problem) {
+        setSpliceError(`${r.problem.detail} (${r.problem.code})`);
+        return;
+      }
+      if (contentRef.current !== base) {
+        setSpliceError(
+          "the text changed while the grid edit was written — redo it on the new grid",
+        );
+        return;
+      }
+      setSpliceError(null);
+      const next = r.data.content;
+      if (next !== undefined && next !== base) {
+        contentRef.current = next;
+        onChange(next);
+      }
+    } finally {
+      splicingRef.current = false;
+      setSplicing(false);
+    }
   }
 
   return (
     <Box style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
-      <ExpectationsForm content={content} onChange={onChange} />
+      <ExpectationsForm content={content} onChange={onChange} disabled={splicing} />
       <Group px="xs" py={2} gap="xs">
         <SegmentedControl
           size="xs"
           value={view}
           onChange={(v) => setView(v as "text" | "grid")}
+          disabled={splicing}
           data={[
             { label: "Text", value: "text" },
             { label: "Grid", value: "grid" },
           ]}
         />
+        {view === "grid" && (splicing || (parsed !== null && !fresh)) && (
+          <Text size="xs" c="dimmed" role="status">
+            {splicing ? "Writing the grid edit…" : "Re-reading the text…"}
+          </Text>
+        )}
         {spliceError && (
           <Text size="xs" c="red" role="alert">
             Not written: {spliceError}
@@ -104,28 +175,78 @@ export function ScenarioEditor({ tab, onChange, onSave, analysis }: Props) {
           onSave={onSave}
         />
       ) : (
-        <GridView parsed={current} analysis={analysis} onSplice={splice} />
+        <GridView
+          parsed={parsed?.value ?? null}
+          blocked={splicing || !fresh}
+          analysis={analysis}
+          onSplice={(d) => (parsed ? splice(d, parsed.forContent) : Promise.resolve())}
+        />
       )}
+      <Modal
+        opened={askComments !== null}
+        onClose={() => askComments?.resolve(false)}
+        title={`Rewrite dataset ${askComments?.name ?? ""}?`}
+        size="md"
+      >
+        <Stack gap="sm">
+          <Text size="sm">
+            The block <code>{askComments?.name}</code> carries comment lines. A grid edit rewrites
+            the whole block and drops them — the text view keeps them if you edit there instead.
+          </Text>
+          <Group justify="flex-end">
+            <Button variant="default" onClick={() => askComments?.resolve(false)}>
+              Cancel
+            </Button>
+            <Button onClick={() => askComments?.resolve(true)}>Rewrite without the comments</Button>
+          </Group>
+        </Stack>
+      </Modal>
     </Box>
   );
 }
 
 // ---- the expectations header ------------------------------------------------------------------
 
-const EXPECT_VALUES = ["violation", "no-violation", "skipped", "error"];
+/** The `expect=` tokens `RuleTestCdt` accepts (`RuleTestScenario.Verdict.token()`). */
+const EXPECT_VALUES = ["violation", "noViolation", "skipped", "executionError"];
 
 function ExpectationsForm({
   content,
   onChange,
+  disabled,
 }: {
   content: string;
   onChange: (c: string) => void;
+  /** A grid splice is in flight: the header waits (its edit would race the splice). */
+  disabled: boolean;
 }) {
   const e = readExpectations(content);
   const write = (next: Partial<Expectations>) =>
     onChange(writeExpectations(content, { ...e, ...next }));
+  // A new #expectViolationAt line is written only once it has text (review 10): a bare directive
+  // line is a half-filled expectation the buffer would carry into a save.
+  const [draft, setDraft] = useState<string | null>(null);
+  const draftRef = useRef<string | null>(null);
+  const editDraft = (v: string | null) => {
+    draftRef.current = v;
+    setDraft(v);
+  };
+  const commitDraft = () => {
+    const v = draftRef.current?.trim() ?? "";
+    editDraft(null);
+    if (v) write({ expectViolationAt: [...e.expectViolationAt, v] });
+  };
   return (
-    <Group px="xs" py={4} gap="xs" align="flex-end" wrap="wrap" aria-label="expectations">
+    <Group
+      px="xs"
+      py={4}
+      gap="xs"
+      align="flex-end"
+      wrap="wrap"
+      aria-label="expectations"
+      style={disabled ? { pointerEvents: "none", opacity: 0.6 } : undefined}
+      aria-disabled={disabled || undefined}
+    >
       <Text size="xs" c="dimmed" style={{ fontFamily: "var(--mantine-font-family-monospace)" }}>
         #test {e.ruleId ?? "?"}
       </Text>
@@ -141,6 +262,7 @@ function ExpectationsForm({
         value={e.expect}
         onChange={(v) => write({ expect: v })}
         clearable
+        disabled={disabled}
         w={140}
       />
       <TextInput
@@ -149,6 +271,7 @@ function ExpectationsForm({
         aria-label="domain"
         value={e.domain ?? ""}
         onChange={(ev) => write({ domain: ev.currentTarget.value || null })}
+        readOnly={disabled}
         w={100}
       />
       <NumberInput
@@ -159,6 +282,7 @@ function ExpectationsForm({
         min={0}
         allowDecimal={false}
         onChange={(v) => write({ expectViolationCount: v === "" ? null : Number(v) })}
+        readOnly={disabled}
         w={160}
       />
       <Stack gap={2}>
@@ -174,6 +298,7 @@ function ExpectationsForm({
                 ats[i] = ev.currentTarget.value;
                 write({ expectViolationAt: ats });
               }}
+              readOnly={disabled}
               w={320}
             />
             <ActionIcon
@@ -188,10 +313,28 @@ function ExpectationsForm({
             </ActionIcon>
           </Group>
         ))}
+        {draft !== null && (
+          <TextInput
+            size="xs"
+            aria-label={`expectViolationAt ${e.expectViolationAt.length + 1}`}
+            placeholder="COLUMN=value … (Enter adds the line)"
+            value={draft}
+            autoFocus
+            style={{ fontFamily: "var(--mantine-font-family-monospace)" }}
+            onChange={(ev) => editDraft(ev.currentTarget.value)}
+            onBlur={commitDraft}
+            onKeyDown={(ev) => {
+              if (ev.key === "Enter") commitDraft();
+              if (ev.key === "Escape") editDraft(null);
+            }}
+            w={320}
+          />
+        )}
         <Button
           size="compact-xs"
           variant="subtle"
-          onClick={() => write({ expectViolationAt: [...e.expectViolationAt, ""] })}
+          disabled={disabled || draft !== null}
+          onClick={() => editDraft("")}
         >
           + #expectViolationAt
         </Button>
@@ -204,10 +347,13 @@ function ExpectationsForm({
 
 function GridView({
   parsed,
+  blocked,
   analysis,
   onSplice,
 }: {
   parsed: ParsedT | null;
+  /** A splice is in flight or the parse is of older text: shown, dimmed, read-only. */
+  blocked: boolean;
   analysis: AnalysisT | null;
   onSplice: (d: DatasetT) => Promise<void>;
 }) {
@@ -239,7 +385,14 @@ function GridView({
     <Tabs
       value={value}
       onChange={setActive}
-      style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}
+      aria-busy={blocked || undefined}
+      style={{
+        flex: 1,
+        minHeight: 0,
+        display: "flex",
+        flexDirection: "column",
+        ...(blocked ? { opacity: 0.6 } : {}),
+      }}
     >
       <Tabs.List>
         {datasets.map((d) => (
@@ -251,7 +404,7 @@ function GridView({
       {datasets.map((d) => (
         <Tabs.Panel key={d.name} value={d.name ?? ""} style={{ flex: 1, minHeight: 0 }}>
           <ScrollArea h="100%" type="auto">
-            <DatasetGrid dataset={d} analysis={analysis} onSplice={onSplice} />
+            <DatasetGrid dataset={d} blocked={blocked} analysis={analysis} onSplice={onSplice} />
           </ScrollArea>
         </Tabs.Panel>
       ))}
@@ -261,10 +414,12 @@ function GridView({
 
 function DatasetGrid({
   dataset,
+  blocked,
   analysis,
   onSplice,
 }: {
   dataset: DatasetT;
+  blocked: boolean;
   analysis: AnalysisT | null;
   onSplice: (d: DatasetT) => Promise<void>;
 }) {
@@ -273,7 +428,7 @@ function DatasetGrid({
   const rows = dataset.rows ?? [];
 
   const commitCell = (r: number, c: number, text: string) => {
-    if (rows[r][c] === text) return;
+    if (blocked || rows[r]?.[c] === undefined || rows[r][c] === text) return;
     const next = rows.map((row, i) =>
       i === r ? row.map((cell, j) => (j === c ? text : cell)) : row,
     );
@@ -305,10 +460,15 @@ function DatasetGrid({
           {dataset.label ? ` — ${dataset.label}` : ""} · {rows.length} row
           {rows.length === 1 ? "" : "s"}
         </Text>
-        <Button size="compact-xs" variant="default" onClick={addRow}>
+        <Button size="compact-xs" variant="default" onClick={addRow} disabled={blocked}>
           + row
         </Button>
-        <Button size="compact-xs" variant="default" onClick={() => setAdding(true)}>
+        <Button
+          size="compact-xs"
+          variant="default"
+          onClick={() => setAdding(true)}
+          disabled={blocked}
+        >
           + column
         </Button>
       </Group>
@@ -347,6 +507,7 @@ function DatasetGrid({
                     size="xs"
                     variant="subtle"
                     aria-label={`remove column ${c.name}`}
+                    disabled={blocked}
                     onClick={() => removeColumn(i)}
                   >
                     ×
@@ -369,6 +530,7 @@ function DatasetGrid({
                   size="xs"
                   variant="subtle"
                   aria-label={`remove row ${r + 1}`}
+                  disabled={blocked}
                   onClick={() => removeRow(r)}
                 >
                   ×
@@ -379,6 +541,7 @@ function DatasetGrid({
                   <Cell
                     value={cell}
                     label={`${columns[c]?.name ?? c} row ${r + 1}`}
+                    blocked={blocked}
                     onCommit={(t) => commitCell(r, c, t)}
                   />
                 </Table.Td>
@@ -398,18 +561,35 @@ function DatasetGrid({
   );
 }
 
-/** One cell: the raw field text, a missing sentinel shown distinctly (dimmed, marked). */
+/**
+ * One cell: the raw field text, a missing sentinel shown distinctly (dimmed, marked). An edit
+ * starts on focus (or on the first keystroke) and commits on blur / Enter; Escape drops it and
+ * leaves the cell, so nothing typed afterwards can commit unseen (review 10). Read-only while
+ * the grid is blocked.
+ */
 function Cell({
   value,
   label,
+  blocked,
   onCommit,
 }: {
   value: string;
   label: string;
+  blocked: boolean;
   onCommit: (t: string) => void;
 }) {
   const [text, setText] = useState(value);
   const [editing, setEditing] = useState(false);
+  const edit = useRef<string | null>(null);
+  const begin = (t: string) => {
+    edit.current = t;
+    setText(t);
+    setEditing(true);
+  };
+  const end = () => {
+    edit.current = null;
+    setEditing(false);
+  };
   const shown = editing ? text : value;
   const missing = isMissing(shown);
   return (
@@ -419,20 +599,29 @@ function Cell({
       aria-label={label}
       title={missing ? `missing (${shown})` : undefined}
       value={shown}
+      readOnly={blocked}
       onFocus={() => {
-        setText(value);
-        setEditing(true);
+        if (!blocked) begin(value);
       }}
-      onChange={(e) => setText(e.currentTarget.value)}
+      onChange={(e) => {
+        if (blocked) return;
+        const t = e.currentTarget.value;
+        if (edit.current === null) begin(t);
+        else {
+          edit.current = t;
+          setText(t);
+        }
+      }}
       onBlur={() => {
-        setEditing(false);
-        onCommit(text);
+        const t = edit.current;
+        end();
+        if (t !== null) onCommit(t);
       }}
       onKeyDown={(e) => {
         if (e.key === "Enter") e.currentTarget.blur();
         if (e.key === "Escape") {
-          setText(value);
-          setEditing(false);
+          end();
+          e.currentTarget.blur();
         }
       }}
       styles={{
