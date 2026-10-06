@@ -40,6 +40,8 @@ interface Props {
   reportScenario?: string;
   /** The report is the selected scenario's: only then may its expectations be taken. */
   reportCurrent?: boolean;
+  /** The scenario or rule buffer changed since the run: shown stale, nothing to take. */
+  reportChanged?: boolean;
   runError: string | undefined;
   runBusy: boolean;
   canRun: boolean;
@@ -455,6 +457,7 @@ function ResultsTab({
   report,
   reportScenario,
   reportCurrent,
+  reportChanged,
   selectedScenario,
   runError,
   runBusy,
@@ -471,7 +474,12 @@ function ResultsTab({
         </Button>
         {report?.expectations?.lines && reportCurrent && (
           <Tooltip label="Propose the observed findings as the scenario's expectation lines — shown as a diff, written only on confirmation">
-            <Button size="compact-xs" variant="default" onClick={onTakeExpected}>
+            <Button
+              size="compact-xs"
+              variant="default"
+              onClick={onTakeExpected}
+              disabled={reportChanged}
+            >
               Take actual as expected
             </Button>
           </Tooltip>
@@ -495,6 +503,12 @@ function ResultsTab({
               <Text span fw={600} style={{ fontFamily: "var(--mantine-font-family-monospace)" }}>
                 {fileName(reportScenario)}
               </Text>
+              {reportCurrent && reportChanged && (
+                <Text span c="orange">
+                  {" "}
+                  — the scenario or rule changed since this run — run again
+                </Text>
+              )}
               {!reportCurrent && (
                 <Text span c="orange">
                   {" "}

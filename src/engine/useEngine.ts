@@ -270,6 +270,10 @@ export interface RunEntry {
   report: RunReportT;
   scenarioPath: string;
   branch: string;
+  /** The buffers the run judged: a later edit of either makes the report stale (its rows and
+   * `#expectViolationAt` keys may point elsewhere). */
+  scenarioContent: string;
+  ruleContent: string;
 }
 
 /**
@@ -310,7 +314,16 @@ export function useRuns(epoch: string) {
           delete next[rule.path];
           return next;
         });
-        setReports((p) => ({ ...p, [rule.path]: { report, scenarioPath, branch } }));
+        setReports((p) => ({
+          ...p,
+          [rule.path]: {
+            report,
+            scenarioPath,
+            branch,
+            scenarioContent: scenario.content,
+            ruleContent: rule.content,
+          },
+        }));
         setLastRuns((p) => ({
           ...p,
           [scenarioPath]: {

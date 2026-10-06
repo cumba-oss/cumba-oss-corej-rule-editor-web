@@ -416,6 +416,46 @@ describe("EditorShell — review fold (PLAN-rule-editor web review)", () => {
     expect(mainView(container).state.doc.toString()).toBe(fake.files.get(INVALID)!.content);
   });
 
+  it("refuses to take expectations from a run of a scenario or rule that changed since (confirmation look)", async () => {
+    const user = userEvent.setup();
+    const { container } = renderShell();
+    await openRule(user);
+    await scenarioRow("CDISC-CG0270-invalid-AE.cdt");
+    fireEvent.keyDown(window, { key: "F5" });
+    await waitFor(() =>
+      expect(screen.getByRole("tab", { name: "Results (PASS)" })).toBeInTheDocument(),
+    );
+    // edit the scenario the run judged: delete its second row
+    await user.dblClick(await scenarioRow("CDISC-CG0270-invalid-AE.cdt"));
+    await screen.findByRole("tab", { name: "CDISC-CG0270-invalid-AE.cdt" });
+    const view = mainView(container);
+    act(() => {
+      const text = view.state.doc.toString();
+      const at = text.indexOf("01-701-1016 | . | 2\n");
+      view.dispatch({ changes: { from: at, to: at + "01-701-1016 | . | 2\n".length } });
+    });
+    await user.click(screen.getByRole("tab", { name: "Results (PASS)" }));
+    expect(screen.getByLabelText("report scenario")).toHaveTextContent(
+      "changed since this run — run again",
+    );
+    const take = screen.getByRole("button", { name: "Take actual as expected" });
+    expect(take).toBeDisabled();
+    await user.click(take);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    // undo the edit: the report describes the buffer again
+    act(() => {
+      view.dispatch({
+        changes: { from: 0, to: view.state.doc.length, insert: fake.files.get(INVALID)!.content },
+      });
+    });
+    expect(screen.getByRole("button", { name: "Take actual as expected" })).toBeEnabled();
+    // a rule edit after the run makes it stale too
+    await user.click(screen.getByRole("tab", { name: "CDISC-CG0270.yaml" }));
+    appendToBuffer(container, "# edited after the run\n");
+    await user.click(screen.getByRole("tab", { name: "Results (PASS)" }));
+    expect(screen.getByRole("button", { name: "Take actual as expected" })).toBeDisabled();
+  });
+
   it("shows the #test expect= rewrite in the diff and writes it with the lines (REST fold)", async () => {
     const user = userEvent.setup();
     const { container } = renderShell();

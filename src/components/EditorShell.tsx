@@ -225,6 +225,17 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
   const report = runEntry?.report;
   /** The report describes the selected scenario: only then can its expectations be taken. */
   const reportCurrent = !!runEntry && runEntry.scenarioPath === selectedScenario;
+  /**
+   * The scenario or rule buffer changed since the run (confirmation look): the proposal's rows
+   * and keys may point elsewhere, so it cannot be taken. A scenario without an open tab is still
+   * the file the run read; that is re-checked when the take opens it.
+   */
+  const reportChanged =
+    !!runEntry &&
+    (tabs.tabs.some(
+      (t) => t.path === runEntry.scenarioPath && t.content !== runEntry.scenarioContent,
+    ) ||
+      (!!ruleTab && ruleTab.content !== runEntry.ruleContent));
   const runError = rulePath ? runs.errors[rulePath] : undefined;
   const canRun = !!ruleTab && !!selectedScenario && !runs.busy;
 
@@ -386,13 +397,25 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
    * branch is refused (review 1).
    */
   async function requestTakeExpected() {
-    if (!runEntry || !reportCurrent || runEntry.branch !== epoch) {
+    if (!runEntry || !reportCurrent || reportChanged || runEntry.branch !== epoch) {
       notifications.show({
         color: "orange",
         title: "Take actual as expected",
         message: "The report is not the selected scenario's — run it first.",
       });
       return;
+    }
+    // not open yet: the file must still be what the run judged
+    if (!tabs.tabs.some((t) => t.path === runEntry.scenarioPath)) {
+      const r = await editor.readFile(runEntry.scenarioPath);
+      if (r.problem || (r.data.content ?? "") !== runEntry.scenarioContent) {
+        notifications.show({
+          color: "orange",
+          title: "Take actual as expected",
+          message: "The scenario changed since this run — run again.",
+        });
+        return;
+      }
     }
     await openPath(runEntry.scenarioPath);
     setTakeExpected(runEntry);
@@ -415,7 +438,12 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
     const target = takeExpected;
     setTakeExpected(null);
     if (!target || !takeTab || !proposal) return;
-    if (target.branch !== epoch || runs.reports[rulePath ?? ""] !== target) {
+    if (
+      target.branch !== epoch ||
+      runs.reports[rulePath ?? ""] !== target ||
+      takeTab.content !== target.scenarioContent ||
+      (ruleTab && ruleTab.content !== target.ruleContent)
+    ) {
       notifications.show({
         color: "orange",
         title: "Take actual as expected",
@@ -907,6 +935,7 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
             report={report}
             reportScenario={runEntry?.scenarioPath}
             reportCurrent={reportCurrent}
+            reportChanged={reportChanged}
             runError={runError}
             runBusy={runs.busy}
             canRun={canRun}
