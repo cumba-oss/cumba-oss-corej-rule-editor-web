@@ -69,7 +69,7 @@ which that repo's `OpenApiSnapshotTest` pins to the served document. `npm run ge
 
 ## Branding and the light/dark switch
 
-The look is a **deployment choice** (`databrowser-meta/plans/PLAN-web-branding-and-theme.md`):
+The look is a **deployment choice** (`databrowser-meta/plans/done/PLAN-web-branding-and-theme.md`):
 a brand is a named folder under [`brands/`](brands/) — `brand.css` with the design tokens for
 light **and** dark, an optional `brand.json` for a logo and a kicker, fonts and images. Two ship:
 `neutral` (the default, today's look plus a dark scheme) and `p300` (the corej.p-300.com house
