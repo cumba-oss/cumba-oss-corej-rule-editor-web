@@ -1,0 +1,168 @@
+/*
+ * The fallback value of EVERY brand token (brands/README.md is the contract). Bundled with the app and
+ * imported after Mantine's styles; the deployment's /brand/brand.css is loaded by index.html and wins
+ * over everything here because every rule below sits under `:where()`, which has ZERO specificity —
+ * a brand may therefore be a handful of lines, and stylesheet order never matters.
+ *
+ * The ten shades of a palette derive from its one base colour unless the brand gives exact shades
+ * (`--brand-<role>-0` … `-9`); the base colours below are Mantine's stock ones, the derived shades are
+ * close to, not identical with, the stock palettes — brands/neutral/brand.css writes the exact stock
+ * shades out, so the default deployment looks as it did before branding.
+ *
+ * ⚠ A token set only on `:root` applies to BOTH colour schemes: it outranks the dark fallback here.
+ * A brand that changes a surface or text colour sets its dark value too.
+ */
+
+:where(:root) {
+  /* surfaces and text — light */
+  --brand-body: #ffffff;
+  --brand-surface: #ffffff;
+  --brand-surface-hover: #f8f9fa;
+  --brand-border: #ced4da;
+  --brand-text: #000000;
+  --brand-text-dimmed: #868e96;
+  --brand-link: #228be6;
+
+  /* the base colour of every palette (Mantine's stock shade 6) */
+  --brand-primary: #228be6;
+  --brand-primary-contrast: #ffffff;
+  --brand-danger: #fa5252;
+  --brand-success: #40c057;
+  --brand-warning: #fd7e14;
+  --brand-caution: #fab005;
+  --brand-info: #228be6;
+  --brand-neutral: #868e96;
+
+  /* the shades, derived: lighter ones mixed with white, darker ones with black */
+  --brand-primary-0: color-mix(in oklab, var(--brand-primary) 9%, white);
+  --brand-primary-1: color-mix(in oklab, var(--brand-primary) 18%, white);
+  --brand-primary-2: color-mix(in oklab, var(--brand-primary) 33%, white);
+  --brand-primary-3: color-mix(in oklab, var(--brand-primary) 50%, white);
+  --brand-primary-4: color-mix(in oklab, var(--brand-primary) 68%, white);
+  --brand-primary-5: color-mix(in oklab, var(--brand-primary) 85%, white);
+  --brand-primary-6: var(--brand-primary);
+  --brand-primary-7: color-mix(in oklab, var(--brand-primary) 90%, black);
+  --brand-primary-8: color-mix(in oklab, var(--brand-primary) 80%, black);
+  --brand-primary-9: color-mix(in oklab, var(--brand-primary) 70%, black);
+
+  --brand-danger-0: color-mix(in oklab, var(--brand-danger) 9%, white);
+  --brand-danger-1: color-mix(in oklab, var(--brand-danger) 18%, white);
+  --brand-danger-2: color-mix(in oklab, var(--brand-danger) 33%, white);
+  --brand-danger-3: color-mix(in oklab, var(--brand-danger) 50%, white);
+  --brand-danger-4: color-mix(in oklab, var(--brand-danger) 68%, white);
+  --brand-danger-5: color-mix(in oklab, var(--brand-danger) 85%, white);
+  --brand-danger-6: var(--brand-danger);
+  --brand-danger-7: color-mix(in oklab, var(--brand-danger) 90%, black);
+  --brand-danger-8: color-mix(in oklab, var(--brand-danger) 80%, black);
+  --brand-danger-9: color-mix(in oklab, var(--brand-danger) 70%, black);
+
+  --brand-success-0: color-mix(in oklab, var(--brand-success) 9%, white);
+  --brand-success-1: color-mix(in oklab, var(--brand-success) 18%, white);
+  --brand-success-2: color-mix(in oklab, var(--brand-success) 33%, white);
+  --brand-success-3: color-mix(in oklab, var(--brand-success) 50%, white);
+  --brand-success-4: color-mix(in oklab, var(--brand-success) 68%, white);
+  --brand-success-5: color-mix(in oklab, var(--brand-success) 85%, white);
+  --brand-success-6: var(--brand-success);
+  --brand-success-7: color-mix(in oklab, var(--brand-success) 90%, black);
+  --brand-success-8: color-mix(in oklab, var(--brand-success) 80%, black);
+  --brand-success-9: color-mix(in oklab, var(--brand-success) 70%, black);
+
+  --brand-warning-0: color-mix(in oklab, var(--brand-warning) 9%, white);
+  --brand-warning-1: color-mix(in oklab, var(--brand-warning) 18%, white);
+  --brand-warning-2: color-mix(in oklab, var(--brand-warning) 33%, white);
+  --brand-warning-3: color-mix(in oklab, var(--brand-warning) 50%, white);
+  --brand-warning-4: color-mix(in oklab, var(--brand-warning) 68%, white);
+  --brand-warning-5: color-mix(in oklab, var(--brand-warning) 85%, white);
+  --brand-warning-6: var(--brand-warning);
+  --brand-warning-7: color-mix(in oklab, var(--brand-warning) 90%, black);
+  --brand-warning-8: color-mix(in oklab, var(--brand-warning) 80%, black);
+  --brand-warning-9: color-mix(in oklab, var(--brand-warning) 70%, black);
+
+  --brand-caution-0: color-mix(in oklab, var(--brand-caution) 9%, white);
+  --brand-caution-1: color-mix(in oklab, var(--brand-caution) 18%, white);
+  --brand-caution-2: color-mix(in oklab, var(--brand-caution) 33%, white);
+  --brand-caution-3: color-mix(in oklab, var(--brand-caution) 50%, white);
+  --brand-caution-4: color-mix(in oklab, var(--brand-caution) 68%, white);
+  --brand-caution-5: color-mix(in oklab, var(--brand-caution) 85%, white);
+  --brand-caution-6: var(--brand-caution);
+  --brand-caution-7: color-mix(in oklab, var(--brand-caution) 90%, black);
+  --brand-caution-8: color-mix(in oklab, var(--brand-caution) 80%, black);
+  --brand-caution-9: color-mix(in oklab, var(--brand-caution) 70%, black);
+
+  --brand-info-0: color-mix(in oklab, var(--brand-info) 9%, white);
+  --brand-info-1: color-mix(in oklab, var(--brand-info) 18%, white);
+  --brand-info-2: color-mix(in oklab, var(--brand-info) 33%, white);
+  --brand-info-3: color-mix(in oklab, var(--brand-info) 50%, white);
+  --brand-info-4: color-mix(in oklab, var(--brand-info) 68%, white);
+  --brand-info-5: color-mix(in oklab, var(--brand-info) 85%, white);
+  --brand-info-6: var(--brand-info);
+  --brand-info-7: color-mix(in oklab, var(--brand-info) 90%, black);
+  --brand-info-8: color-mix(in oklab, var(--brand-info) 80%, black);
+  --brand-info-9: color-mix(in oklab, var(--brand-info) 70%, black);
+
+  --brand-neutral-0: color-mix(in oklab, var(--brand-neutral) 9%, white);
+  --brand-neutral-1: color-mix(in oklab, var(--brand-neutral) 18%, white);
+  --brand-neutral-2: color-mix(in oklab, var(--brand-neutral) 33%, white);
+  --brand-neutral-3: color-mix(in oklab, var(--brand-neutral) 50%, white);
+  --brand-neutral-4: color-mix(in oklab, var(--brand-neutral) 68%, white);
+  --brand-neutral-5: color-mix(in oklab, var(--brand-neutral) 85%, white);
+  --brand-neutral-6: var(--brand-neutral);
+  --brand-neutral-7: color-mix(in oklab, var(--brand-neutral) 90%, black);
+  --brand-neutral-8: color-mix(in oklab, var(--brand-neutral) 80%, black);
+  --brand-neutral-9: color-mix(in oklab, var(--brand-neutral) 70%, black);
+
+  /* the dark-mode surfaces Mantine's components use (its stock `dark` palette) */
+  --brand-dark-0: #c9c9c9;
+  --brand-dark-1: #b8b8b8;
+  --brand-dark-2: #828282;
+  --brand-dark-3: #696969;
+  --brand-dark-4: #424242;
+  --brand-dark-5: #3b3b3b;
+  --brand-dark-6: #2e2e2e;
+  --brand-dark-7: #242424;
+  --brand-dark-8: #1f1f1f;
+  --brand-dark-9: #141414;
+
+  /* typography and shape (Mantine's stock) */
+  --brand-font-body:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  --brand-font-headings: var(--brand-font-body);
+  --brand-font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  --brand-radius: 0.5rem;
+
+  /* code: CodeMirror and the JSON tree — light */
+  --brand-code-bg: #ffffff;
+  --brand-code-fg: #000000;
+  --brand-code-gutter: #f8f9fa;
+  --brand-code-selection: #d7d4f0;
+  --brand-code-key: #1c7ed6;
+  --brand-code-string: #2b8a3e;
+  --brand-code-number: #d9480f;
+  --brand-code-keyword: #862e9c;
+  --brand-code-comment: #868e96;
+}
+
+:where(:root[data-mantine-color-scheme="dark"]) {
+  /* surfaces and text — dark (Mantine's stock dark scheme) */
+  --brand-body: #242424;
+  --brand-surface: #2e2e2e;
+  --brand-surface-hover: #3b3b3b;
+  --brand-border: #424242;
+  --brand-text: #c9c9c9;
+  --brand-text-dimmed: #828282;
+  --brand-link: #4dabf7;
+
+  /* code — dark */
+  --brand-code-bg: #1a1b1e;
+  --brand-code-fg: #c9c9c9;
+  --brand-code-gutter: #242424;
+  --brand-code-selection: #3b4252;
+  --brand-code-key: #74c0fc;
+  --brand-code-string: #8ce99a;
+  --brand-code-number: #ffa94d;
+  --brand-code-keyword: #da77f2;
+  --brand-code-comment: #828282;
+}

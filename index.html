@@ -4,6 +4,12 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>coreJ rule editor</title>
+    <!-- The colour scheme before the first paint, then the deployment's brand (PLAN-web-branding-and-theme):
+         both are runtime files outside the bundle — theme-init.js lives in public/ (external because the
+         nginx CSP forbids inline script), brand.css is whatever the server maps /brand/ to. vite-ignore
+         keeps the build from resolving them; %BASE_URL% keeps them right under a non-root base. -->
+    <script src="%BASE_URL%theme-init.js" vite-ignore></script>
+    <link rel="stylesheet" href="%BASE_URL%brand/brand.css" vite-ignore />
   </head>
   <body>
     <div id="root"></div>

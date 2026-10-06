@@ -11,6 +11,11 @@
 # The upstream name `rule-editor-rest` is the compose service; override it with
 # --build-arg API_UPSTREAM=host:port for another deployment.
 #
+# The brand (PLAN-web-branding-and-theme): BRAND=<name> in the container's environment selects
+# the folder under /usr/share/nginx/html/brands/ that nginx serves as /brand/ (default neutral;
+# p300 ships too; mount your own at brands/<name> — DOCKER.md). docker/25-cumba-brand.sh refuses
+# to start on an unknown name, naming the available ones.
+#
 # ⚠ Written in a sandbox WITHOUT docker: checked for shape, not by a build.
 ARG NGINX_IMAGE=nginx:1.27-alpine
 FROM ${NGINX_IMAGE}
@@ -21,6 +26,11 @@ COPY docker/nginx.conf /etc/nginx/templates/default.conf.template
 # substituting only the variables named in NGINX_ENVSUBST_FILTER (so nginx's own $vars
 # survive).
 ENV API_UPSTREAM=${API_UPSTREAM} \
-    NGINX_ENVSUBST_FILTER=API_UPSTREAM
+    BRAND=neutral \
+    NGINX_ENVSUBST_FILTER="API_UPSTREAM|BRAND"
+# ⚠ --chmod=0755 is load-bearing: the entrypoint IGNORES a non-executable script ("Ignoring … not
+# executable"), and an unchecked unknown BRAND would then 404 /brand/brand.css and render the
+# defaults with no error.
+COPY --chmod=0755 docker/25-cumba-brand.sh /docker-entrypoint.d/25-cumba-brand.sh
 COPY dist/ /usr/share/nginx/html/
 EXPOSE 80

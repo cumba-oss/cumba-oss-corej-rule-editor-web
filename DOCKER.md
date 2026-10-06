@@ -90,6 +90,22 @@ change the subnet and `EDITOR_TRUSTED_PROXIES` together. A client inside a trust
 told from a proxy, so never trust a wider range; the TLS proxy on the host must append the real
 client to `X-Forwarded-For`.
 
+### The brand
+
+`BRAND=<name>` in the environment of `rule-editor-web` selects the look (`neutral` by default,
+`p300` ships too; `docker-compose.yml` passes `${BRAND:-neutral}` through, so `BRAND=p300 docker
+compose up` is enough). An unknown name stops the container at start-up with the available names
+in its log — the look is never silently the default. To add a brand of your own, mount its folder
+(the token contract: `brands/README.md`) beside the shipped ones:
+
+```yaml
+volumes:
+  - ./my-brands/acme:/usr/share/nginx/html/brands/acme:ro
+```
+
+and set `BRAND=acme`. The equivalent for `docker run`:
+`-e BRAND=acme -v ./my-brands/acme:/usr/share/nginx/html/brands/acme:ro`.
+
 ## 5. Build the images and start
 
 ```bash

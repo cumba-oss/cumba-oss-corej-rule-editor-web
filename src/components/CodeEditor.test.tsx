@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, fireEvent, screen, waitFor } from "@testing-library/react";
 import { EditorView } from "@codemirror/view";
 import { foldedRanges } from "@codemirror/language";
@@ -297,5 +297,45 @@ describe("CodeEditor — the greyed generated fields (phase 3)", () => {
         json.querySelectorAll(".cm-foldGutter .cm-gutterElement [title]").length,
       ).toBeGreaterThan(0),
     );
+  });
+
+  describe("colour scheme", () => {
+    afterEach(() => {
+      vi.unstubAllGlobals();
+      window.localStorage.clear();
+    });
+
+    it("follows the COMPUTED scheme: auto on a dark OS gives the dark brand theme at first render", () => {
+      // under "auto" useMantineColorScheme() answers "auto" — the old `=== "dark"` test rendered light
+      vi.stubGlobal("matchMedia", (query: string) => ({
+        matches: query.includes("dark"),
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      }));
+      const { container } = renderWithProviders(
+        <CodeEditor label="x" language="yaml" value="a: 1" onChange={vi.fn()} />,
+      );
+      expect(viewOf(container).state.facet(EditorView.darkTheme)).toBe(true);
+    });
+
+    it("takes a stored dark choice", () => {
+      window.localStorage.setItem("cumba-theme", "dark");
+      const { container } = renderWithProviders(
+        <CodeEditor label="x" language="yaml" value="a: 1" onChange={vi.fn()} />,
+      );
+      expect(viewOf(container).state.facet(EditorView.darkTheme)).toBe(true);
+    });
+
+    it("is light under auto with a light OS", () => {
+      const { container } = renderWithProviders(
+        <CodeEditor label="x" language="yaml" value="a: 1" onChange={vi.fn()} />,
+      );
+      expect(viewOf(container).state.facet(EditorView.darkTheme)).toBe(false);
+    });
   });
 });

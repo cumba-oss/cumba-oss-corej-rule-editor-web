@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Box, useMantineColorScheme } from "@mantine/core";
+import { Box, useComputedColorScheme } from "@mantine/core";
 import CodeMirror, { type ReactCodeMirrorRef } from "@uiw/react-codemirror";
 import { EditorView, keymap } from "@codemirror/view";
 import { Prec } from "@codemirror/state";
@@ -24,6 +24,7 @@ import { ruleCompletion } from "./editor/ruleCompletion";
 import { ruleTooltips } from "./editor/ruleTooltips";
 import { jsonFolding } from "./editor/jsonFold";
 import { yamlListExtensions } from "./editor/yamlListEditing";
+import { codeTheme } from "../brand/codeTheme";
 
 /** An inline editor marker (red/orange/blue squiggle) at a character range. */
 export interface EditorMarker {
@@ -106,7 +107,9 @@ export function CodeEditor({
   derived,
   reveal,
 }: Props) {
-  const { colorScheme } = useMantineColorScheme();
+  // The COMPUTED scheme: under "auto" useMantineColorScheme() answers "auto", never "dark"; the
+  // initial value is read synchronously so the editor never renders light first and flips.
+  const colorScheme = useComputedColorScheme("light", { getInitialValueInEffect: false });
   const cmRef = useRef<ReactCodeMirrorRef>(null);
   const withEngine = engine !== undefined;
   // Latest-value refs read by the once-built (stable) linter and save keymap below, so the
@@ -274,7 +277,7 @@ export function CodeEditor({
         value={value}
         onChange={onChange}
         readOnly={readOnly}
-        theme={colorScheme === "dark" ? "dark" : "light"}
+        theme={codeTheme(colorScheme)}
         height="100%"
         style={{ flex: 1, minHeight: 0, overflow: "auto" }}
         extensions={extensions}

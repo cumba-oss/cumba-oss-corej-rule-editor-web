@@ -67,11 +67,29 @@ which that repo's `OpenApiSnapshotTest` pins to the served document. `npm run ge
 `schema.d.ts` drifts from the snapshot. When the API changes: copy the new snapshot here, run
 `npm run gen:api`, commit both.
 
+## Branding and the light/dark switch
+
+The look is a **deployment choice** (`databrowser-meta/plans/PLAN-web-branding-and-theme.md`):
+a brand is a named folder under [`brands/`](brands/) — `brand.css` with the design tokens for
+light **and** dark, an optional `brand.json` for a logo and a kicker, fonts and images. Two ship:
+`neutral` (the default, today's look plus a dark scheme) and `p300` (the corej.p-300.com house
+style). The SPA always loads `/brand/brand.css`; whatever serves it maps `/brand/` to the chosen
+folder, selected **by name**: `BRAND=<name>` for `npm run dev` / `vite preview` and the nginx image,
+`EDITOR_BRAND_NAME` when bundled into the rest jar. An unknown name refuses to start and lists the
+available ones. The token contract and how to add a brand: [`brands/README.md`](brands/README.md).
+
+The colour scheme follows the OS and the header's sun/moon toggle overrides it (a choice equal to
+the OS preference is forgotten again, as on the websites); `public/theme-init.js` applies the stored
+choice before the first paint. Code: `src/brand/` (the Mantine theme built from the tokens, the
+CodeMirror theme, the toggle, the logo), `scripts/vite-brand-plugin.ts` (copies the brands into
+`dist/`, serves `/brand/` in dev and preview, checks `BRAND`), `docker/25-cumba-brand.sh` (the same
+check in the image).
+
 ## Building and running
 
 ```bash
 npm ci
-npm run dev        # Vite on :5173, /api proxied to the rest app on :8081
+npm run dev        # Vite on :5173, /api proxied to the rest app on :8081; BRAND=p300 npm run dev
 npm run verify     # prettier → eslint → tsc → vitest (coverage 85/85/70/85) → vite build
 mvn verify         # the same through frontend-maven-plugin + the release zip (target/*.zip)
 ```

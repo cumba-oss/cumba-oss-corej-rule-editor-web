@@ -1,0 +1,172 @@
+/*
+ * neutral — the default brand: the look the apps had before branding (Mantine's stock palettes, system
+ * fonts) plus a dark scheme. Every token of the contract (brands/README.md) is written out, so this file
+ * is the full example to copy when starting a brand of your own.
+ *
+ * ⚠ Whoever copies this file to start a brand and changes a palette's BASE colour must delete that
+ * palette's ten shade lines (`--brand-<role>-0` … `-9`): exact shades outrank the shades the app derives
+ * from the base, so the old shades would win.
+ *
+ * Light values on `:root`, dark values on `:root[data-mantine-color-scheme="dark"]`. A token set only
+ * on `:root` applies to both schemes.
+ */
+
+:root {
+  /* surfaces and text — light */
+  --brand-body: #ffffff;
+  --brand-surface: #ffffff;
+  --brand-surface-hover: #f8f9fa;
+  --brand-border: #ced4da;
+  --brand-text: #000000;
+  --brand-text-dimmed: #868e96;
+  --brand-link: #228be6;
+
+  /* text on a filled primary surface */
+  --brand-primary-contrast: #ffffff;
+
+  /* primary = Mantine 'blue', the exact stock shades */
+  --brand-primary: #228be6;
+  --brand-primary-0: #e7f5ff;
+  --brand-primary-1: #d0ebff;
+  --brand-primary-2: #a5d8ff;
+  --brand-primary-3: #74c0fc;
+  --brand-primary-4: #4dabf7;
+  --brand-primary-5: #339af0;
+  --brand-primary-6: #228be6;
+  --brand-primary-7: #1c7ed6;
+  --brand-primary-8: #1971c2;
+  --brand-primary-9: #1864ab;
+
+  /* danger = Mantine 'red', the exact stock shades */
+  --brand-danger: #fa5252;
+  --brand-danger-0: #fff5f5;
+  --brand-danger-1: #ffe3e3;
+  --brand-danger-2: #ffc9c9;
+  --brand-danger-3: #ffa8a8;
+  --brand-danger-4: #ff8787;
+  --brand-danger-5: #ff6b6b;
+  --brand-danger-6: #fa5252;
+  --brand-danger-7: #f03e3e;
+  --brand-danger-8: #e03131;
+  --brand-danger-9: #c92a2a;
+
+  /* success = Mantine 'green', the exact stock shades */
+  --brand-success: #40c057;
+  --brand-success-0: #ebfbee;
+  --brand-success-1: #d3f9d8;
+  --brand-success-2: #b2f2bb;
+  --brand-success-3: #8ce99a;
+  --brand-success-4: #69db7c;
+  --brand-success-5: #51cf66;
+  --brand-success-6: #40c057;
+  --brand-success-7: #37b24d;
+  --brand-success-8: #2f9e44;
+  --brand-success-9: #2b8a3e;
+
+  /* warning = Mantine 'orange', the exact stock shades */
+  --brand-warning: #fd7e14;
+  --brand-warning-0: #fff4e6;
+  --brand-warning-1: #ffe8cc;
+  --brand-warning-2: #ffd8a8;
+  --brand-warning-3: #ffc078;
+  --brand-warning-4: #ffa94d;
+  --brand-warning-5: #ff922b;
+  --brand-warning-6: #fd7e14;
+  --brand-warning-7: #f76707;
+  --brand-warning-8: #e8590c;
+  --brand-warning-9: #d9480f;
+
+  /* caution = Mantine 'yellow', the exact stock shades */
+  --brand-caution: #fab005;
+  --brand-caution-0: #fff9db;
+  --brand-caution-1: #fff3bf;
+  --brand-caution-2: #ffec99;
+  --brand-caution-3: #ffe066;
+  --brand-caution-4: #ffd43b;
+  --brand-caution-5: #fcc419;
+  --brand-caution-6: #fab005;
+  --brand-caution-7: #f59f00;
+  --brand-caution-8: #f08c00;
+  --brand-caution-9: #e67700;
+
+  /* info = Mantine 'blue', the exact stock shades */
+  --brand-info: #228be6;
+  --brand-info-0: #e7f5ff;
+  --brand-info-1: #d0ebff;
+  --brand-info-2: #a5d8ff;
+  --brand-info-3: #74c0fc;
+  --brand-info-4: #4dabf7;
+  --brand-info-5: #339af0;
+  --brand-info-6: #228be6;
+  --brand-info-7: #1c7ed6;
+  --brand-info-8: #1971c2;
+  --brand-info-9: #1864ab;
+
+  /* neutral = Mantine 'gray', the exact stock shades */
+  --brand-neutral: #868e96;
+  --brand-neutral-0: #f8f9fa;
+  --brand-neutral-1: #f1f3f5;
+  --brand-neutral-2: #e9ecef;
+  --brand-neutral-3: #dee2e6;
+  --brand-neutral-4: #ced4da;
+  --brand-neutral-5: #adb5bd;
+  --brand-neutral-6: #868e96;
+  --brand-neutral-7: #495057;
+  --brand-neutral-8: #343a40;
+  --brand-neutral-9: #212529;
+
+  /* dark = Mantine 'dark', the exact stock shades */
+  --brand-dark-0: #c9c9c9;
+  --brand-dark-1: #b8b8b8;
+  --brand-dark-2: #828282;
+  --brand-dark-3: #696969;
+  --brand-dark-4: #424242;
+  --brand-dark-5: #3b3b3b;
+  --brand-dark-6: #2e2e2e;
+  --brand-dark-7: #242424;
+  --brand-dark-8: #1f1f1f;
+  --brand-dark-9: #141414;
+
+  /* typography and shape */
+  --brand-font-body:
+    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif,
+    "Apple Color Emoji", "Segoe UI Emoji";
+  --brand-font-headings: var(--brand-font-body);
+  --brand-font-mono:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  --brand-radius: 0.5rem;
+
+  /* code: CodeMirror and the JSON tree — light */
+  --brand-code-bg: #ffffff;
+  --brand-code-fg: #000000;
+  --brand-code-gutter: #f8f9fa;
+  --brand-code-selection: #d7d4f0;
+  --brand-code-key: #1c7ed6;
+  --brand-code-string: #2b8a3e;
+  --brand-code-number: #d9480f;
+  --brand-code-keyword: #862e9c;
+  --brand-code-comment: #868e96;
+}
+
+:root[data-mantine-color-scheme="dark"] {
+  /* surfaces and text — dark */
+  --brand-body: #242424;
+  --brand-surface: #2e2e2e;
+  --brand-surface-hover: #3b3b3b;
+  --brand-border: #424242;
+  --brand-text: #c9c9c9;
+  --brand-text-dimmed: #828282;
+  --brand-link: #4dabf7;
+
+  /* code — dark */
+  --brand-code-bg: #1a1b1e;
+  --brand-code-fg: #c9c9c9;
+  --brand-code-gutter: #242424;
+  --brand-code-selection: #3b4252;
+  --brand-code-key: #74c0fc;
+  --brand-code-string: #8ce99a;
+  --brand-code-number: #ffa94d;
+  --brand-code-keyword: #da77f2;
+  --brand-code-comment: #828282;
+}

@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { http, HttpResponse } from "msw";
+import { server } from "../test/server";
 import { renderWithProviders } from "../test/renderWithProviders";
 import type { SessionInfoT, StatusT } from "../api/types";
 import { Header, pendingCount } from "./Header";
@@ -98,5 +100,41 @@ describe("Header", () => {
       />,
     );
     expect(screen.getByRole("button", { name: "Commit + Push" })).toBeDisabled();
+  });
+
+  it("shows the brand's logo pair and kicker, and the light/dark toggle", async () => {
+    server.use(
+      http.get("/brand/brand.json", () =>
+        HttpResponse.json({
+          logo: "logo.svg",
+          logoDark: "logo-dark.svg",
+          kicker: "made by X",
+          kickerUrl: "https://x.example/",
+        }),
+      ),
+    );
+    const { container } = renderWithProviders(
+      <Header
+        info={info}
+        session={session}
+        status={status}
+        unsavedCount={0}
+        onOpenBranches={vi.fn()}
+        onCommitPush={vi.fn()}
+        onLogout={vi.fn()}
+      />,
+    );
+    expect(await screen.findByRole("link", { name: "made by X" })).toHaveAttribute(
+      "href",
+      "https://x.example/",
+    );
+    const logos = container.querySelectorAll("img[data-brand-logo]");
+    expect([...logos].map((img) => img.getAttribute("src"))).toEqual([
+      "/brand/logo.svg",
+      "/brand/logo-dark.svg",
+    ]);
+    expect(screen.getByRole("button", { name: "Switch to dark mode" })).toBeInTheDocument();
+    // the app's own title is not brand content
+    expect(screen.getByText("cumba/rules")).toBeInTheDocument();
   });
 });

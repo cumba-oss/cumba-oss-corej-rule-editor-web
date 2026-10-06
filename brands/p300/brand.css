@@ -1,0 +1,135 @@
+/*
+ * p300 — the house style of corej.p-300.com (its public/css/brand.css): ink, paper, teal and yolk;
+ * Fraunces for headings, Inter for everything else; radius 8px. Light on `:root`, dark on
+ * `:root[data-mantine-color-scheme="dark"]`, as the website flips them.
+ *
+ * Only the tokens that differ from the app's defaults are set (brands/README.md lists them all); the
+ * palettes give a base colour and let the app derive the shades. The code colours were measured
+ * against the code background for WCAG AA (≥ 4.5 : 1) in both schemes — the website's text-muted
+ * and the J-green of the wordmark fail that on paper, so comment and string are a step darker here.
+ *
+ * Fonts: Inter 400–700 and Fraunces 400/600 from fonts/ (SIL OFL 1.1, licence files beside them).
+ */
+
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/inter-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url("fonts/inter-500.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/inter-600.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Inter";
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url("fonts/inter-700.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url("fonts/fraunces-400.woff2") format("woff2");
+}
+@font-face {
+  font-family: "Fraunces";
+  font-style: normal;
+  font-weight: 600;
+  font-display: swap;
+  src: url("fonts/fraunces-600.woff2") format("woff2");
+}
+
+:root {
+  /* surfaces and text — light: paper, the card surface, the line */
+  --brand-body: #f6f3ec;
+  --brand-surface: #fffdf8;
+  --brand-surface-hover: #efeae0;
+  --brand-border: #d9d2c4;
+  --brand-text: #1c2b33;
+  --brand-text-dimmed: #5d6b73;
+  --brand-link: #157d7d;
+
+  /* teal leads; white on it as the website's buttons */
+  --brand-primary: #1f9c9c;
+  --brand-primary-contrast: #ffffff;
+  --brand-danger: #c0392b;
+  --brand-success: #2c7a52;
+  --brand-warning: #d98324;
+  --brand-caution: #f2c14e;
+  --brand-info: #1f9c9c;
+  --brand-neutral: #8a9298;
+
+  /* the dark-mode surfaces, tinted like the website's dark paper */
+  --brand-dark-0: #eef2f1;
+  --brand-dark-1: #c7d0d4;
+  --brand-dark-2: #9fb0b7;
+  --brand-dark-3: #6c7d84;
+  --brand-dark-4: #2c3d45;
+  --brand-dark-5: #1b252b;
+  --brand-dark-6: #161f24;
+  --brand-dark-7: #10171b;
+  --brand-dark-8: #0c1215;
+  --brand-dark-9: #080d0f;
+
+  --brand-font-body: "Inter", "Segoe UI", system-ui, -apple-system, sans-serif;
+  --brand-font-headings: "Fraunces", Georgia, "Times New Roman", serif;
+  --brand-radius: 8px;
+
+  /* code — light (measured ≥ 4.85 : 1 on the code background) */
+  --brand-code-bg: #fffdf8;
+  --brand-code-fg: #1c2b33;
+  --brand-code-gutter: #efeae0;
+  --brand-code-selection: rgba(31, 156, 156, 0.18);
+  --brand-code-key: #157d7d;
+  --brand-code-string: #3f7a5d;
+  --brand-code-number: #8a5a0a;
+  --brand-code-keyword: #c0392b;
+  --brand-code-comment: #5d6b73;
+}
+
+:root[data-mantine-color-scheme="dark"] {
+  --brand-body: #10171b;
+  --brand-surface: #161f24;
+  --brand-surface-hover: #1b252b;
+  --brand-border: rgba(255, 255, 255, 0.1);
+  --brand-text: #eef2f1;
+  --brand-text-dimmed: #9fb0b7;
+  --brand-link: #5fc9c9;
+
+  /* the brighter teal of the dark website; ink on it (white would be 2.5 : 1). The semantic bases
+     stay saturated: filled surfaces carry white text, the light / outline variants derive from them */
+  --brand-primary: #2bb6b6;
+  --brand-primary-contrast: #1c2b33;
+  --brand-danger: #d9534f;
+  --brand-success: #3fa672;
+  --brand-warning: #e08a2e;
+  --brand-caution: #e0b23c;
+  --brand-info: #2bb6b6;
+  --brand-neutral: #8a9ba3;
+
+  /* code — dark (measured ≥ 7.2 : 1) */
+  --brand-code-bg: #161f24;
+  --brand-code-fg: #eef2f1;
+  --brand-code-gutter: #1b252b;
+  --brand-code-selection: rgba(43, 182, 182, 0.25);
+  --brand-code-key: #5fc9c9;
+  --brand-code-string: #86cea4;
+  --brand-code-number: #f2c14e;
+  --brand-code-keyword: #e9967f;
+  --brand-code-comment: #9fb0b7;
+}

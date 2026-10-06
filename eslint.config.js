@@ -20,7 +20,12 @@ export default tseslint.config(
     rules: { ...reactHooks.configs.recommended.rules },
   },
   {
-    files: ["scripts/**/*.mjs", "vite.config.ts"],
+    files: ["scripts/**/*.{mjs,ts}", "vite.config.ts"],
     languageOptions: { globals: { ...globals.node } },
+  },
+  {
+    // public/ is served as is (theme-init.js runs in the browser before the bundle).
+    files: ["public/**/*.js"],
+    languageOptions: { sourceType: "script", globals: { ...globals.browser } },
   },
 );
