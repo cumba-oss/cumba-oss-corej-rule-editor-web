@@ -52,7 +52,7 @@ export function availableBrands(brandsDir: string): string[] {
 
 /**
  * The brand to serve: `name` (undefined or blank ⇒ `neutral`), checked against the name rule and
- * for an existing `brand.css`. Throws, naming the available brands, otherwise.
+ * for an existing `brand.css` under `brandsDir`. Throws, naming the available brands, otherwise.
  */
 export function resolveBrand(brandsDir: string, name: string | undefined): string {
   const brand = name === undefined || name.trim() === "" ? DEFAULT_BRAND : name.trim();
@@ -113,7 +113,16 @@ export function serveBrand(brandDir: string, prefix: string): Connect.NextHandle
     res.statusCode = 200;
     res.setHeader("Content-Type", CONTENT_TYPES[path.extname(file)] ?? "application/octet-stream");
     res.setHeader("Cache-Control", "no-cache");
-    fs.createReadStream(file).pipe(res);
+    const stream = fs.createReadStream(file);
+    // a file that vanishes or cannot be read between stat and open: answer, never hang the request
+    stream.on("error", () => {
+      if (!res.headersSent) {
+        res.statusCode = 404;
+        res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      }
+      res.end("not found");
+    });
+    stream.pipe(res);
   };
 }
 
@@ -154,14 +163,21 @@ export function brandPlugin(options: BrandPluginOptions = {}): Plugin {
       root = config.root;
       outDir = config.build.outDir;
       prefix = `${config.base.replace(/\/$/, "")}/brand/`;
-      // Under vitest the brand is never served, so a stray BRAND in the shell must not red the gate.
-      if (!env.VITEST) brand = resolveBrand(path.join(root, "brands"), env.BRAND);
     },
+    // BRAND selects what is SERVED, so it is validated where a server starts: `vite dev` against
+    // brands/, `vite preview` against dist/brands/ (what the preview serves). A build ships every
+    // brand and reads no BRAND. Vitest starts a dev server too, but serves no brand: a stray
+    // BRAND in the shell must not red the unit gate.
     configureServer(server) {
-      server.middlewares.use(serveBrand(path.join(root, "brands", brand), prefix));
+      if (env.VITEST) return;
+      const brandsDir = path.join(root, "brands");
+      brand = resolveBrand(brandsDir, env.BRAND);
+      server.middlewares.use(serveBrand(path.join(brandsDir, brand), prefix));
     },
     configurePreviewServer(server) {
-      server.middlewares.use(serveBrand(path.resolve(root, outDir, "brands", brand), prefix));
+      const brandsDir = path.resolve(root, outDir, "brands");
+      brand = resolveBrand(brandsDir, env.BRAND);
+      server.middlewares.use(serveBrand(path.join(brandsDir, brand), prefix));
     },
     writeBundle() {
       copyBrands(path.join(root, "brands"), path.resolve(root, outDir));

@@ -20,12 +20,16 @@ export function brandAsset(relativePath: string): string {
   return BRAND_BASE + relativePath;
 }
 
-/** A path inside the brand folder: no scheme, not absolute, no `..` segment, no backslash. */
+/**
+ * A path inside the brand folder: no scheme, not absolute, no `..` segment, no backslash, no
+ * percent-encoding (`%2e%2e` would be decoded by the server after this check split on `/`).
+ */
 export function isBrandPath(value: unknown): value is string {
   if (typeof value !== "string" || value === "" || value.length > 1024) return false;
   if (/^[a-z][a-z0-9+.-]*:/i.test(value) || value.startsWith("/") || value.includes("\\")) {
     return false;
   }
+  if (value.includes("%")) return false;
   return !value.split("/").some((segment) => segment === "..");
 }
 

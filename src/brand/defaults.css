@@ -145,6 +145,19 @@
   --brand-code-comment: #868e96;
 }
 
+/*
+ * Before MantineProvider mounts, Mantine's styles.css already paints body and text from its own
+ * --mantine-color-body / --mantine-color-text (white / black, or the dark pair): the brand's values
+ * arrive only with the provider's variables. These two rules make the page paint in the brand's
+ * colours from the first frame (theme-init.js has set the scheme attribute by then); they are
+ * loaded after Mantine's styles.css and the provider's own values outrank them later.
+ */
+:root[data-mantine-color-scheme="light"],
+:root[data-mantine-color-scheme="dark"] {
+  --mantine-color-body: var(--brand-body);
+  --mantine-color-text: var(--brand-text);
+}
+
 :where(:root[data-mantine-color-scheme="dark"]) {
   /* surfaces and text — dark (Mantine's stock dark scheme) */
   --brand-body: #242424;

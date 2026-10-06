@@ -44,15 +44,19 @@ describe("brandTheme", () => {
     expect(filledRed.color).toBe("var(--mantine-color-white)");
     const lightPrimary = theme.variantColorResolver({ color: "brand", theme, variant: "light" });
     expect(lightPrimary.color).toBe("var(--mantine-color-brand-light-color)");
+    // the Checkbox's check mark follows the same token
+    expect(theme.components.Checkbox?.defaultProps).toEqual({
+      iconColor: "var(--brand-primary-contrast)",
+    });
   });
 
   it("resolves the surface, text and link variables from the tokens in both schemes", () => {
     const resolved = brandCssVariables(theme);
-    expect(resolved.variables["--mantine-primary-color-contrast"]).toBe(
-      "var(--brand-primary-contrast)",
-    );
+    // per scheme, where Mantine sets its own value — a scheme-less entry would be shadowed
+    expect(resolved.variables).toEqual({});
     for (const scheme of ["light", "dark"] as const) {
       expect(resolved[scheme]).toEqual({
+        "--mantine-primary-color-contrast": "var(--brand-primary-contrast)",
         "--mantine-color-body": "var(--brand-body)",
         "--mantine-color-text": "var(--brand-text)",
         "--mantine-color-dimmed": "var(--brand-text-dimmed)",

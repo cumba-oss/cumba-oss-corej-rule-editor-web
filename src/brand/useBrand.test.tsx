@@ -23,6 +23,8 @@ describe("brand.json validation", () => {
     expect(isBrandPath("javascript:alert(1)")).toBe(false);
     expect(isBrandPath("data:image/svg+xml,x")).toBe(false);
     expect(isBrandPath("img\\logo.svg")).toBe(false);
+    expect(isBrandPath("%2e%2e/x.svg")).toBe(false);
+    expect(isBrandPath("logo%20.svg")).toBe(false);
     expect(isBrandPath(42)).toBe(false);
     expect(isKickerUrl("https://www.p-300.com")).toBe(true);
     expect(isKickerUrl("http://localhost:8080/x")).toBe(true);
@@ -129,6 +131,14 @@ describe("BrandMark", () => {
     expect(logos[0]?.dataset.brandLogo).toBe("both");
     expect(screen.queryByRole("link")).not.toBeInTheDocument();
     expect(screen.getByText("made by X")).toBeInTheDocument();
+  });
+
+  it("uses a lone logoDark for both schemes", () => {
+    const { container } = renderWithProviders(<BrandMark brand={{ logoDark: "dark.svg" }} />);
+    const logos = container.querySelectorAll<HTMLImageElement>("img[data-brand-logo]");
+    expect(logos).toHaveLength(1);
+    expect(logos[0]?.dataset.brandLogo).toBe("both");
+    expect(logos[0]?.getAttribute("src")).toBe("/brand/dark.svg");
   });
 
   it("renders nothing for an empty brand", () => {

@@ -162,8 +162,8 @@ describe("copyBrands", () => {
 });
 
 describe("brandPlugin", () => {
-  const config = (base = "/") =>
-    ({ root, base, build: { outDir: "dist" } }) as unknown as ResolvedConfig;
+  const config = (base = "/", command: "serve" | "build" = "serve") =>
+    ({ root, base, command, build: { outDir: "dist" } }) as unknown as ResolvedConfig;
 
   function configResolved(plugin: ReturnType<typeof brandPlugin>, cfg: ResolvedConfig) {
     const hook = plugin.configResolved;
@@ -172,15 +172,52 @@ describe("brandPlugin", () => {
     return fn.call({} as never, cfg);
   }
 
-  it("refuses an unknown BRAND at configResolved, except under vitest", () => {
-    expect(() => configResolved(brandPlugin({ env: { BRAND: "nope" } }), config())).toThrow(
-      /BRAND "nope"/,
+  it("refuses an unknown BRAND where a server starts (dev against brands/, preview against dist/brands/), never at a build or under vitest", async () => {
+    const serve = async (plugin: ReturnType<typeof brandPlugin>, preview: boolean) => {
+      const use = vi.fn();
+      const hook = preview ? plugin.configurePreviewServer : plugin.configureServer;
+      const fn = typeof hook === "function" ? hook : hook?.handler;
+      await fn?.call({} as never, { middlewares: { use } } as never);
+      return use;
+    };
+    const unknown = brandPlugin({ env: { BRAND: "nope" } });
+    configResolved(unknown, config());
+    await expect(serve(unknown, false)).rejects.toThrow(/BRAND "nope"/);
+    const underVitest = brandPlugin({ env: { BRAND: "nope", VITEST: "true" } });
+    configResolved(underVitest, config());
+    expect(await serve(underVitest, false)).not.toHaveBeenCalled();
+    const build = brandPlugin({ env: { BRAND: "nope" } });
+    expect(() => configResolved(build, config("/", "build"))).not.toThrow();
+    // preview validates against what it serves: dist/brands, not the sources
+    const previewAcme = brandPlugin({ env: { BRAND: "acme" } });
+    configResolved(previewAcme, config());
+    await expect(serve(previewAcme, true)).rejects.toThrow(
+      /BRAND "acme" has no brands\/acme\/brand.css; available: $/,
     );
-    expect(() =>
-      configResolved(brandPlugin({ env: { BRAND: "nope", VITEST: "true" } }), config()),
-    ).not.toThrow();
-    expect(() => configResolved(brandPlugin({ env: {} }), config())).not.toThrow();
+    copyBrands(path.join(root, "brands"), path.join(root, "dist"));
+    expect(await serve(previewAcme, true)).toHaveBeenCalledTimes(1);
   });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)(
+    "answers 404 when the file cannot be read after the lookup",
+    async () => {
+      const dir = path.join(root, "brands", "acme");
+      const middleware = serveBrand(dir, "/brand/");
+      const locked = path.join(dir, "locked.css");
+      fs.writeFileSync(locked, "/* locked */");
+      fs.chmodSync(locked, 0o000);
+      try {
+        const r = request("/brand/locked.css");
+        const done = finished(r.res);
+        middleware(r.req, r.res, () => {});
+        await done;
+        expect(r.res.statusCode).toBe(404);
+        expect(r.res.body()).toBe("not found");
+      } finally {
+        fs.chmodSync(locked, 0o644);
+      }
+    },
+  );
 
   it("serves the selected brand in dev from brands/ and in preview from dist/brands/, under the base", async () => {
     const plugin = brandPlugin({ env: { BRAND: "acme" } });

@@ -1,4 +1,5 @@
 import {
+  Checkbox,
   createTheme,
   defaultVariantColorsResolver,
   type CSSVariablesResolver,
@@ -48,6 +49,10 @@ export const brandTheme = createTheme({
     dark: shades("dark"),
   },
   variantColorResolver,
+  components: {
+    // the check mark on a filled primary box follows the same contrast token as filled text
+    Checkbox: Checkbox.extend({ defaultProps: { iconColor: "var(--brand-primary-contrast)" } }),
+  },
   fontFamily: "var(--brand-font-body)",
   fontFamilyMonospace: "var(--brand-font-mono)",
   headings: { fontFamily: "var(--brand-font-headings)" },
@@ -56,6 +61,9 @@ export const brandTheme = createTheme({
 });
 
 const surfaces = {
+  // in the light AND dark blocks: Mantine's own scheme blocks set --mantine-primary-color-contrast
+  // per scheme and would shadow a scheme-less `variables` entry (review round 1 LOW-1)
+  "--mantine-primary-color-contrast": "var(--brand-primary-contrast)",
   "--mantine-color-body": "var(--brand-body)",
   "--mantine-color-text": "var(--brand-text)",
   "--mantine-color-dimmed": "var(--brand-text-dimmed)",
@@ -67,7 +75,7 @@ const surfaces = {
 
 /** The surface, text and link variables, in both schemes, from the tokens (which carry both). */
 export const brandCssVariables: CSSVariablesResolver = () => ({
-  variables: { "--mantine-primary-color-contrast": "var(--brand-primary-contrast)" },
+  variables: {},
   light: { ...surfaces },
   dark: { ...surfaces },
 });

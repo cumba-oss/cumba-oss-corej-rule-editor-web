@@ -55,8 +55,8 @@ All fields optional. `logo` / `logoDark` are paths **inside the folder** (no sch
 no `..`); `kickerUrl` must be `http:` or `https:`. A field of another shape is ignored with one
 browser-console warning; a missing or malformed `brand.json` means no logo and no kicker, never an
 error. `neutral/brand.json` is `{}` so a static server with SPA fallback never answers the request
-with `index.html`. The logo is rendered 22 px high in the header, `logoDark` in dark mode (without
-it the one logo serves both).
+with `index.html`. The logo is rendered 22 px high in the header, `logoDark` in dark mode; with
+only one of the two given, that one serves both schemes.
 
 Product names are **not** brand content: the header titles belong to the apps.
 

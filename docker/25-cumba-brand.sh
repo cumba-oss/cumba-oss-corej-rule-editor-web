@@ -10,7 +10,6 @@
 set -e
 
 root="${CUMBA_HTML_ROOT:-/usr/share/nginx/html}"
-brand="${BRAND:-neutral}"
 
 available() {
     for css in "$root"/brands/*/brand.css; do
@@ -19,6 +18,15 @@ available() {
         basename "$dir"
     done | tr '\n' ' '
 }
+
+# ${BRAND-neutral}, not ${BRAND:-neutral}: an EMPTY variable must be refused, because envsubst
+# renders the alias as brands// and every /brand/ request 404s silently.
+brand="${BRAND-neutral}"
+
+if [ -z "$brand" ]; then
+    echo "cumba brand: BRAND is set but empty — unset it for neutral, or name a brand; available: $(available)" >&2
+    exit 1
+fi
 
 if ! printf '%s' "$brand" | grep -Eq '^[a-z0-9][a-z0-9-]{0,39}$'; then
     echo "cumba brand: BRAND=\"$brand\" is not a brand name (^[a-z0-9][a-z0-9-]{0,39}$); available: $(available)" >&2

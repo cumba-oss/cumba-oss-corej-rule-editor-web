@@ -64,14 +64,17 @@
   --brand-text-dimmed: #5d6b73;
   --brand-link: #157d7d;
 
-  /* teal leads; white on it as the website's buttons */
-  --brand-primary: #1f9c9c;
+  /* teal leads. The website's #1f9c9c carries white text at 3.3 : 1; filled surfaces here take
+     teal-dk #157d7d (white 4.9 : 1, AA) — the hover/link teal of the website — so buttons, badges
+     and check marks stay readable. Danger #c0392b 5.4, success #2c7a52 5.2; warning #d98324 under
+     white is 2.9 (as Mantine's own orange) */
+  --brand-primary: #157d7d;
   --brand-primary-contrast: #ffffff;
   --brand-danger: #c0392b;
   --brand-success: #2c7a52;
   --brand-warning: #d98324;
   --brand-caution: #f2c14e;
-  --brand-info: #1f9c9c;
+  --brand-info: #157d7d;
   --brand-neutral: #8a9298;
 
   /* the dark-mode surfaces, tinted like the website's dark paper */
@@ -111,8 +114,9 @@
   --brand-text-dimmed: #9fb0b7;
   --brand-link: #5fc9c9;
 
-  /* the brighter teal of the dark website; ink on it (white would be 2.5 : 1). The semantic bases
-     stay saturated: filled surfaces carry white text, the light / outline variants derive from them */
+  /* the brighter teal of the dark website; ink on it (5.9 : 1 — white would be 2.5 : 1; the check
+     mark follows --brand-primary-contrast too). The semantic bases stay saturated: filled surfaces
+     carry white text, the light / outline variants derive from them */
   --brand-primary: #2bb6b6;
   --brand-primary-contrast: #1c2b33;
   --brand-danger: #d9534f;

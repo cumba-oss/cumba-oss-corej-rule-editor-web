@@ -7,6 +7,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 
 const SCRIPT = path.resolve(__dirname, "../docker/25-cumba-brand.sh");
+const WINDOWS = process.platform === "win32";
+/** `sh` on the PATH: the script is driven through it (never on Windows, review MED-2). */
+const HAS_SH = !WINDOWS && spawnSync("sh", ["-c", "exit 0"]).status === 0;
 let root: string;
 
 beforeEach(() => {
@@ -29,7 +32,8 @@ function run(brand: string | undefined) {
 
 describe("docker/25-cumba-brand.sh", () => {
   it("is committed executable (the entrypoint ignores a non-executable script)", () => {
-    expect(fs.statSync(SCRIPT).mode & 0o111).toBe(0o111);
+    // the file-system mode means nothing on Windows; the git index mode is checked everywhere
+    if (!WINDOWS) expect(fs.statSync(SCRIPT).mode & 0o111).toBe(0o111);
     const tracked = spawnSync("git", ["ls-files", "-s", "docker/25-cumba-brand.sh"], {
       cwd: path.dirname(SCRIPT),
       encoding: "utf8",
@@ -39,7 +43,7 @@ describe("docker/25-cumba-brand.sh", () => {
     }
   });
 
-  it("accepts a known brand and defaults to neutral", () => {
+  it.skipIf(!HAS_SH)("accepts a known brand and defaults to neutral", () => {
     expect(run("p300")).toMatchObject({
       rc: 0,
       out: "cumba brand: serving /brand/ from brands/p300\n",
@@ -48,7 +52,7 @@ describe("docker/25-cumba-brand.sh", () => {
     expect(run("neutral").rc).toBe(0);
   });
 
-  it("refuses an unknown brand, naming the available ones", () => {
+  it.skipIf(!HAS_SH)("refuses an unknown brand, naming the available ones", () => {
     const r = run("acme");
     expect(r.rc).toBe(1);
     expect(r.err).toContain('BRAND="acme" has no');
@@ -56,13 +60,17 @@ describe("docker/25-cumba-brand.sh", () => {
     expect(run("nocss").rc).toBe(1);
   });
 
-  it("refuses an invalid name before it touches a path", () => {
+  it.skipIf(!HAS_SH)("refuses an invalid name before it touches a path", () => {
     for (const bad of ["../x", "A", "p300/x", "-x", "x".repeat(41)]) {
       const r = run(bad);
       expect(r.rc, bad).toBe(1);
       expect(r.err).toContain("is not a brand name");
     }
-    // an EMPTY variable is "not set": the default, as the vite plugin reads it
-    expect(run("")).toMatchObject({ rc: 0, out: expect.stringContaining("brands/neutral") });
+    // an EMPTY variable is refused (review MED-1): envsubst would render the alias as brands//
+    // and every /brand/ request would 404 silently
+    const empty = run("");
+    expect(empty.rc).toBe(1);
+    expect(empty.err).toContain("BRAND is set but empty");
+    expect(empty.err).toContain("available: neutral p300");
   });
 });
