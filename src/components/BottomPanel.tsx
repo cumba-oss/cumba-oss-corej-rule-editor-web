@@ -88,9 +88,8 @@ export function BottomPanel(props: Props) {
   const diagnostics = analysis?.analysis?.diagnostics ?? [];
   const problemCount = diagnostics.length + (problem ? 1 : 0);
   const analysable = !!tab && (tab.kind === "rule" || tab.kind === "docs");
-  /** Diagnostics of an analysis that no longer describes the buffers (pending or failed). */
-  const staleDiagnostics =
-    analysable && (analysisStatus === "pending" || analysisStatus === "failed");
+  /** Diagnostics of an analysis that does not describe the buffers (pending, failed, none). */
+  const staleDiagnostics = analysable && analysisStatus !== "ok";
   const scenarios = suite?.value?.scenarios ?? null;
 
   return (

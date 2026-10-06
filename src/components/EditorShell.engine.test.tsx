@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { EditorView } from "@codemirror/view";
 import { renderWithProviders } from "../test/renderWithProviders";
 import { fake } from "../test/handlers";
-import type { RunReportT, ServiceInfoT, SessionInfoT } from "../api/types";
+import type { ServiceInfoT, SessionInfoT } from "../api/types";
 import { EditorShell } from "./EditorShell";
 
 // These flows wait out the 400 ms analysis debounce several times each; under the parallel
@@ -421,7 +421,7 @@ describe("EditorShell — review fold (PLAN-rule-editor web review)", () => {
         ats: 1,
         lines: ["#expectViolationCount 1", "#expectViolationAt AETERM=HEADACHE"],
         expect: "violation",
-      } as NonNullable<RunReportT["expectations"]>,
+      },
     };
     fireEvent.keyDown(window, { key: "F5" });
     await waitFor(() =>
@@ -560,10 +560,16 @@ describe("EditorShell — review fold (PLAN-rule-editor web review)", () => {
 
   it("says a lone docs tab is not analysed when its rule cannot be read (review 4)", async () => {
     const user = userEvent.setup();
-    renderShell();
+    const { container } = renderShell();
     await openRule(user);
     await user.click(screen.getByRole("button", { name: "Open docs" }));
     await screen.findByRole("tab", { name: "CDISC-CG0270.yaml (docs)" });
+    // with the rule open, a DOCS diagnostic marks the docs buffer
+    appendToBuffer(container, "# DOCBAD\n");
+    await waitFor(() => expect(container.querySelector(".cm-lintRange-error")).not.toBeNull(), {
+      timeout: 3000,
+    });
+    // the rule disappears and its tab closes: that analysis describes nothing shown any more
     fake.files.delete(RULE);
     await user.click(screen.getByLabelText("close CDISC-CG0270.yaml"));
     await user.click(screen.getByRole("tab", { name: /^Problems/ }));
@@ -571,6 +577,8 @@ describe("EditorShell — review fold (PLAN-rule-editor web review)", () => {
       await screen.findByText("Not analysed — open the rule to analyse it."),
     ).toBeInTheDocument();
     expect(screen.queryByText("No problems.")).toBeNull();
+    expect(screen.getByText(/stale until the new one is in/)).toBeInTheDocument();
+    await waitFor(() => expect(container.querySelector(".cm-lintRange-error")).toBeNull());
   });
 
   it("runs, analyses and proposes expectations in read-only mode without writing (O12)", async () => {

@@ -71,8 +71,8 @@ export function ScenarioEditor({ tab, onChange, onSave, analysis }: Props) {
     contentRef.current = content;
   }, [content]);
   const splicingRef = useRef(false);
-  /** Blocks whose comment loss the user accepted, in this tab. */
-  const commentsAccepted = useRef(new Set<string>());
+  /** Blocks (by index) whose comment loss the user accepted, in this tab. */
+  const commentsAccepted = useRef(new Set<number>());
   const fresh = parsed !== null && parsed.forContent === content;
 
   useEffect(() => {
@@ -90,9 +90,8 @@ export function ScenarioEditor({ tab, onChange, onSave, analysis }: Props) {
     };
   }, [view, content]);
 
-  function confirmComments(name: string): Promise<boolean> {
-    const key = name.toLowerCase();
-    if (commentsAccepted.current.has(key) || !blockHasComments(contentRef.current, name)) {
+  function confirmComments(name: string, index: number): Promise<boolean> {
+    if (commentsAccepted.current.has(index) || !blockHasComments(contentRef.current, index)) {
       return Promise.resolve(true);
     }
     return new Promise((resolve) =>
@@ -100,25 +99,28 @@ export function ScenarioEditor({ tab, onChange, onSave, analysis }: Props) {
         name,
         resolve: (ok) => {
           setAskComments(null);
-          if (ok) commentsAccepted.current.add(key);
+          if (ok) commentsAccepted.current.add(index);
           resolve(ok);
         },
       }),
     );
   }
 
-  /** Splice `dataset` into `base` — the text the grid was parsed from. */
-  async function splice(dataset: DatasetT, base: string): Promise<void> {
+  /**
+   * Splice `dataset` into `base` — the text the grid was parsed from — as the block at `index`
+   * of that parse (a scenario may hold two blocks of one name).
+   */
+  async function splice(dataset: DatasetT, base: string, index: number): Promise<void> {
     if (splicingRef.current) return;
     splicingRef.current = true;
     setSplicing(true);
     try {
-      if (!(await confirmComments(dataset.name ?? ""))) return;
+      if (!(await confirmComments(dataset.name ?? "", index))) return;
       if (contentRef.current !== base) {
         setSpliceError("the text changed before the grid edit was sent — redo it on the new grid");
         return;
       }
-      const r = await cdtSplice(base, dataset);
+      const r = await cdtSplice(base, dataset, index);
       if (r.problem) {
         setSpliceError(`${r.problem.detail} (${r.problem.code})`);
         return;
@@ -179,7 +181,7 @@ export function ScenarioEditor({ tab, onChange, onSave, analysis }: Props) {
           parsed={parsed?.value ?? null}
           blocked={splicing || !fresh}
           analysis={analysis}
-          onSplice={(d) => (parsed ? splice(d, parsed.forContent) : Promise.resolve())}
+          onSplice={(d, i) => (parsed ? splice(d, parsed.forContent, i) : Promise.resolve())}
         />
       )}
       <Modal
@@ -355,8 +357,9 @@ function GridView({
   /** A splice is in flight or the parse is of older text: shown, dimmed, read-only. */
   blocked: boolean;
   analysis: AnalysisT | null;
-  onSplice: (d: DatasetT) => Promise<void>;
+  onSplice: (d: DatasetT, index: number) => Promise<void>;
 }) {
+  // sub-tabs by POSITION: a scenario may hold two blocks of one name
   const [active, setActive] = useState<string | null>(null);
   if (!parsed) {
     return (
@@ -380,7 +383,7 @@ function GridView({
       </Text>
     );
   }
-  const value = datasets.some((d) => d.name === active) ? active : (datasets[0].name ?? null);
+  const value = active !== null && Number(active) < datasets.length ? active : "0";
   return (
     <Tabs
       value={value}
@@ -395,16 +398,21 @@ function GridView({
       }}
     >
       <Tabs.List>
-        {datasets.map((d) => (
-          <Tabs.Tab key={d.name} value={d.name ?? ""}>
+        {datasets.map((d, i) => (
+          <Tabs.Tab key={i} value={String(i)}>
             {d.name}
           </Tabs.Tab>
         ))}
       </Tabs.List>
-      {datasets.map((d) => (
-        <Tabs.Panel key={d.name} value={d.name ?? ""} style={{ flex: 1, minHeight: 0 }}>
+      {datasets.map((d, i) => (
+        <Tabs.Panel key={i} value={String(i)} style={{ flex: 1, minHeight: 0 }}>
           <ScrollArea h="100%" type="auto">
-            <DatasetGrid dataset={d} blocked={blocked} analysis={analysis} onSplice={onSplice} />
+            <DatasetGrid
+              dataset={d}
+              blocked={blocked}
+              analysis={analysis}
+              onSplice={(next) => onSplice(next, i)}
+            />
           </ScrollArea>
         </Tabs.Panel>
       ))}

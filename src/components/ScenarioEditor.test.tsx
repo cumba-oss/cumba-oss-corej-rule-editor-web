@@ -334,6 +334,30 @@ describe("ScenarioEditor — splices in flight (review 2, 6, 10)", () => {
     expect(dm).toBeInTheDocument();
   });
 
+  it("addresses a block by its position, so the second of two same-named blocks is the one written", async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const twice =
+      "#!RuleTest\n#test X expect=violation\ndataset AE\ncol A type=Char\n---\nfirst\n---\ndataset AE\ncol A type=Char\n---\nsecond\n---\n";
+    renderWithProviders(<Harness initial={twice} onChange={onChange} />);
+    await user.click(screen.getByRole("radio", { name: "Grid" }));
+    const tabs = await screen.findAllByRole("tab", { name: "AE" });
+    expect(tabs).toHaveLength(2);
+    await user.click(tabs[1]);
+    const panel = screen
+      .getAllByRole("tabpanel")
+      .find((p) => within(p).queryByDisplayValue("second"))!;
+    const cell = within(panel).getByLabelText("A row 1");
+    await user.clear(cell);
+    await user.type(cell, "SECOND{Enter}");
+    await waitFor(() => expect(fake.engine.splices).toHaveLength(1));
+    expect(fake.engine.spliceIndexes).toEqual([1]);
+    await waitFor(() => expect(onChange).toHaveBeenCalled());
+    const text = onChange.mock.calls.at(-1)![0] as string;
+    expect(text).toContain("---\nfirst\n---");
+    expect(text).toContain("---\nSECOND\n---");
+  });
+
   it("drops what is typed after Escape instead of committing it unseen (review 10)", async () => {
     const user = userEvent.setup();
     const onChange = vi.fn();

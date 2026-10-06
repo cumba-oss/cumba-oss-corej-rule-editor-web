@@ -197,14 +197,28 @@ export function cdtParse(content: string): Promise<ApiResult<ParsedT>> {
   return call(api.POST("/api/cdt/parse", { body: { content } }));
 }
 
-/** Rewrites one dataset block of the text from the grid; `400 CDT_UNREPRESENTABLE` is a refusal. */
-export function cdtSplice(content: string, dataset: DatasetT): Promise<ApiResult<CdtTextT>> {
-  return call(api.POST("/api/cdt/splice", { body: { content, dataset } }));
+/**
+ * Rewrites one dataset block of the text from the grid, addressed by its position in the parse's
+ * `datasets` (a scenario may hold two blocks of one name); `400 CDT_UNREPRESENTABLE` is a refusal.
+ */
+export function cdtSplice(
+  content: string,
+  dataset: DatasetT,
+  index: number,
+): Promise<ApiResult<CdtTextT>> {
+  return call(api.POST("/api/cdt/splice", { body: { content, dataset, index } }));
 }
 
-/** Replaces the `#expectViolation*` lines — called only after the user confirmed the diff. */
-export function cdtExpectations(content: string, lines: string[]): Promise<ApiResult<CdtTextT>> {
-  return call(api.POST("/api/cdt/expectations", { body: { content, lines } }));
+/**
+ * Replaces the `#expectViolation*` lines and, with `expect`, the `#test` line's `expect=` —
+ * called only after the user confirmed the diff.
+ */
+export function cdtExpectations(
+  content: string,
+  lines: string[],
+  expect?: string,
+): Promise<ApiResult<CdtTextT>> {
+  return call(api.POST("/api/cdt/expectations", { body: { content, lines, expect } }));
 }
 
 /** Runs the rule buffer against the scenario buffer (O8): one rule, one scenario. */

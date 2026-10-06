@@ -11,7 +11,7 @@ import type {
   SessionInfoT,
   StatusT,
 } from "../api/types";
-import { expectationProposal, readExpectations, setTestExpect } from "../engine/cdt";
+import { expectationProposal, readExpectations } from "../engine/cdt";
 import { markersOf, rangeOf } from "../engine/diagnostics";
 import {
   docsPathFor,
@@ -255,7 +255,7 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
   const markers = useMemo(() => {
     if (!current || (current.kind !== "rule" && current.kind !== "docs")) return [];
     if (analysisStatus === "pending" || analysisStatus === "failed") return null;
-    if (!analysis) return [];
+    if (analysisStatus === "none" || !analysis) return [];
     return markersOf(
       current.content,
       analysis.diagnostics ?? [],
@@ -424,17 +424,12 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
       return;
     }
     const before = takeTab.content;
-    const r = await editor.cdtExpectations(before, proposal.lines);
+    const r = await editor.cdtExpectations(before, proposal.lines, proposal.expect ?? undefined);
     if (r.problem) {
       notifyProblem("Take actual as expected", r.problem);
       return;
     }
-    const written = r.data.content ?? before;
-    dispatch({
-      type: "edit",
-      path: target.scenarioPath,
-      content: proposal.expect ? setTestExpect(written, proposal.expect) : written,
-    });
+    dispatch({ type: "edit", path: target.scenarioPath, content: r.data.content ?? before });
     dispatch({ type: "activate", path: target.scenarioPath });
   }
 
@@ -1042,14 +1037,11 @@ function nameOf(path: string): string {
   return path.slice(path.lastIndexOf("/") + 1);
 }
 
-/**
- * The `expect=` a run proposes for its scenario (REST fold: `expectations.expect`, or the token
- * of `expectations.testLine`); read behind a guard so a report without them proposes none.
- */
+/** The `expect=` a run proposes for its scenario: `expectations.expect`, else `testLine`'s token. */
 function proposedExpect(report: RunEntry["report"]): string | null {
-  const e = report.expectations as Record<string, unknown> | undefined;
-  if (typeof e?.expect === "string" && e.expect) return e.expect;
-  return typeof e?.testLine === "string" ? readExpectations(e.testLine).expect : null;
+  const e = report.expectations;
+  if (e?.expect) return e.expect;
+  return e?.testLine ? readExpectations(e.testLine).expect : null;
 }
 
 /** The docs sidecar of a check path, from the Explorer tree (RE-Q3: opens as its own tab). */

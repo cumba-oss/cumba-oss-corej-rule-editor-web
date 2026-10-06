@@ -272,12 +272,6 @@ export interface RunEntry {
   branch: string;
 }
 
-/** The fields the run report carries since the REST fold (read behind a guard until then). */
-function reportString(report: RunReportT, key: "scenarioPath" | "branch"): string | undefined {
-  const value = (report as Record<string, unknown>)[key];
-  return typeof value === "string" && value ? value : undefined;
-}
-
 /**
  * The run state (§5.7): one at a time, the last report per rule (with its scenario and branch),
  * the last outcome per scenario. `epoch` (the branch) hides every entry of another branch.
@@ -308,8 +302,9 @@ export function useRuns(epoch: string) {
           return { report: null, error };
         }
         const report = r.data.report ?? {};
-        const scenarioPath = reportString(report, "scenarioPath") ?? scenario.path;
-        const branch = reportString(report, "branch") ?? r.data.branch ?? epoch;
+        // what the server says it judged, on which branch — not what the client meant to send
+        const scenarioPath = r.data.scenarioPath || scenario.path;
+        const branch = r.data.branch || epoch;
         setErrors((e) => {
           const next = { ...e };
           delete next[rule.path];

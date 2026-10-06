@@ -200,27 +200,24 @@ export function expectationProposal(
 }
 
 /**
- * Whether the dataset block `name` (the first of that name, case-insensitive — the splice's
- * target) carries comment lines between its fences: a splice rewrites the block and drops them
- * (`CdtDocument`, PLAN-rule-editor §12).
+ * Whether the dataset block at `index` (0-based, in document order — the splice's address)
+ * carries comment lines between its `dataset` line and its closing fence: a splice rewrites the
+ * block and drops them (`CdtDocument`, PLAN-rule-editor §12).
  */
-export function blockHasComments(text: string, name: string): boolean {
-  const lines = splitLines(text);
-  const lower = name.toLowerCase();
-  const start = lines.findIndex((l) => {
-    const t = l.trim();
-    return t.startsWith("dataset ") && t.slice(8).trim().split(/\s+/)[0].toLowerCase() === lower;
-  });
-  if (start < 0) return false;
-  let fences = 0;
-  for (let i = start + 1; i < lines.length; i++) {
-    const t = lines[i].trim();
-    if (/^-{3,}$/.test(t)) {
-      if (++fences === 2) return false;
+export function blockHasComments(text: string, index: number): boolean {
+  let block = -1;
+  let fences = 2; // outside any block
+  for (const raw of splitLines(text)) {
+    const t = raw.trim();
+    // a `dataset` line opens the next block anywhere but between a block's fences (its rows)
+    if (fences !== 1 && t.startsWith("dataset ")) {
+      block++;
+      fences = 0;
       continue;
     }
-    if (t.startsWith("dataset ")) return false;
-    if (t.startsWith("#")) return true;
+    if (block !== index || fences >= 2) continue;
+    if (/^-{3,}$/.test(t)) fences++;
+    else if (t.startsWith("#")) return true;
   }
   return false;
 }

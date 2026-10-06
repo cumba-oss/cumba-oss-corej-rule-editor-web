@@ -15,7 +15,7 @@ import type {
   SuiteT,
   VariableT,
 } from "../api/types";
-import { datasetText } from "../engine/cdt";
+import { datasetText, setTestExpect, testLine } from "../engine/cdt";
 import type { JsonSchema } from "../engine/schemaWalk";
 
 interface Files {
@@ -253,6 +253,8 @@ export class FakeEngine {
     scenarioContent: string;
   }[] = [];
   splices: DatasetT[] = [];
+  /** The block index each splice addressed (`null`: by name). */
+  spliceIndexes: (number | null)[] = [];
   nextAnalyseProblem: { status: number; code: string } | null = null;
   nextRunProblem: { status: number; code: string } | null = null;
   /** When set, the next run waits for this promise before answering (to test "one at a time"). */
@@ -281,6 +283,7 @@ export class FakeEngine {
     this.analyses = [];
     this.runs = [];
     this.splices = [];
+    this.spliceIndexes = [];
     this.nextAnalyseProblem = null;
     this.nextRunProblem = null;
     this.holdRun = null;
@@ -473,6 +476,11 @@ export class FakeEngine {
         lines: finds
           ? ["#expectViolationCount 1", "#expectViolationAt AETERM=HEADACHE"]
           : ["#expectViolationCount 0"],
+        // RunExecutor: violation when the rule fired, noViolation when nothing fired
+        expect: finds ? "violation" : "noViolation",
+        testLine:
+          testLine(setTestExpect(scenarioContent, finds ? "violation" : "noViolation")) ??
+          undefined,
       },
       ruleDiagnostics: [],
       durationMs: 12,
@@ -552,12 +560,17 @@ export class FakeEngine {
         return HttpResponse.json(parseCdt(body.content));
       }),
       http.post("/api/cdt/splice", async ({ request }) => {
-        const body = (await request.json()) as { content: string; dataset: DatasetT };
+        const body = (await request.json()) as {
+          content: string;
+          dataset: DatasetT;
+          index?: number | null;
+        };
         this.splices.push(body.dataset);
+        this.spliceIndexes.push(body.index ?? null);
         if (this.holdSplice) await this.holdSplice;
         const refused = spliceCheck(body.dataset);
         if (refused) return ws.problem(400, "CDT_UNREPRESENTABLE", refused);
-        const spliced = spliceCdt(body.content, body.dataset);
+        const spliced = spliceCdt(body.content, body.dataset, body.index ?? null);
         if (spliced === null)
           return ws.problem(
             400,
@@ -567,12 +580,20 @@ export class FakeEngine {
         return HttpResponse.json({ content: spliced });
       }),
       http.post("/api/cdt/expectations", async ({ request }) => {
-        const body = (await request.json()) as { content: string; lines: string[] };
+        const body = (await request.json()) as {
+          content: string;
+          lines: string[];
+          expect?: string | null;
+        };
         for (const l of body.lines) {
           if (!l.trim().startsWith("#expectViolation"))
             return ws.problem(400, "BAD_REQUEST", `not an expectation line: ${l}`);
         }
-        return HttpResponse.json({ content: withExpectations(body.content, body.lines) });
+        const written = withExpectations(body.content, body.lines);
+        // `expect` sets the #test line's expect= (null leaves the verdict), as CdtService does
+        return HttpResponse.json({
+          content: body.expect ? setTestExpect(written, body.expect) : written,
+        });
       }),
       http.post("/api/run", async ({ request }) => {
         const body = (await request.json()) as (typeof this.runs)[number];
@@ -592,7 +613,13 @@ export class FakeEngine {
         if (this.holdRun) await this.holdRun;
         const report = this.report(body.content, body.scenarioContent);
         this.nextReport = null;
-        return HttpResponse.json({ branch, head, report });
+        return HttpResponse.json({
+          branch,
+          head,
+          path: body.path,
+          scenarioPath: body.scenarioPath,
+          report,
+        });
       }),
     ];
   }
@@ -718,12 +745,14 @@ export function spliceCheck(d: DatasetT): string | null {
 }
 
 /** Replace the first block named `d.name` (case-insensitive) with the grid's content. */
-export function spliceCdt(text: string, d: DatasetT): string | null {
+export function spliceCdt(text: string, d: DatasetT, index: number | null = null): string | null {
   const nl = text.includes("\r\n") ? "\r\n" : "\n";
   const lines = text.split(/\r?\n/);
-  const start = lines.findIndex((l) =>
-    new RegExp(`^dataset\\s+${d.name}(\\s|$)`, "i").test(l.trim()),
-  );
+  const starts = lines.flatMap((l, i) => (/^dataset\s/.test(l.trim()) ? [i] : []));
+  const start =
+    index !== null
+      ? (starts[index] ?? -1)
+      : lines.findIndex((l) => new RegExp(`^dataset\\s+${d.name}(\\s|$)`, "i").test(l.trim()));
   if (start < 0) return null;
   let fences = 0;
   let end = lines.length;

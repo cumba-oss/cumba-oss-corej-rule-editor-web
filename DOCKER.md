@@ -65,7 +65,7 @@ The defaults in `docker-compose.yml` bind the editor to the public corpus on **G
 | `EDITOR_REPOSITORY_URL` | `https://github.com/cumba-oss/cumba-oss-corej-rules.git`  |
 | `EDITOR_FORGE_TYPE`     | `github` (or `gitea`)                                     |
 | `EDITOR_FORGE_API_URL`  | `https://api.github.com` (Gitea: `https://<host>/api/v1`) |
-| `WEB_PORT`              | `8080` (the port the browser uses)                        |
+| `WEB_PORT`              | `8080` (on 127.0.0.1 only)                                |
 | `JAVA_OPTS`             | `-Xmx1g`                                                  |
 
 Override any of them in the shell or in a `.env` file next to `docker-compose.yml`, e.g.
@@ -75,8 +75,14 @@ Every other key (workspace retention, CORS, cookie flags) is documented in the r
 `application.yaml` at `/etc/rule-editor` in the rest service, or as an environment variable
 (Spring's relaxed binding: `editor.workspace.retention-days` → `EDITOR_WORKSPACE_RETENTIONDAYS`).
 
-The container runs with `--server.servlet.session.cookie.secure=false` because nginx serves
-plain HTTP. When TLS is terminated in front of it, override the command with `…secure=true`.
+⚠ **The session cookie is `Secure`** — the forge token lives in the session, so the cookie must
+never cross plain HTTP (security review M3). The compose file publishes nginx on the **loopback
+only** (`127.0.0.1:${WEB_PORT}`); Chrome and Firefox send a `Secure` cookie to
+`http://localhost`, so a trial on the same machine works as it is. To serve other machines, put
+a TLS-terminating reverse proxy in front of that port (it also sets HSTS) — plain HTTP to
+anything but localhost is **not supported**. Trial opt-out only, for a throw-away instance:
+`COOKIE_SECURE=false` (and edit the port binding to reach it from elsewhere) — never with real
+tokens.
 
 ## 5. Build the images and start
 
@@ -121,14 +127,14 @@ scope completion and library-dependent scenarios failing with that reason.
 
 ## Troubleshooting
 
-| symptom                                                                   | cause                                                                                                 |
-| ------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
-| `COPY failed: … target/cumba-oss-corej-rule-editor-rest-…: not found`     | step 3 not run, or `VERSION` does not match the built version                                         |
-| `COPY failed: … dist/`                                                    | step 2 not run                                                                                        |
-| rest exits with `Config data location '/etc/rule-editor/' does not exist` | an image built before the Dockerfile created that directory — rebuild with `--build`                  |
-| login works, every later call answers `401`                               | the session cookie is `Secure` over plain HTTP — keep `cookie.secure=false` behind a plain-HTTP proxy |
-| `401 FORGE_REFUSED` at login                                              | the token cannot read the repository (the forge answers 404 there, not 401)                           |
-| `502 FORGE_UNAVAILABLE`                                                   | the container cannot reach `EDITOR_FORGE_API_URL` (proxy / DNS / TLS inside Docker)                   |
+| symptom                                                                   | cause                                                                                                                                                     |
+| ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `COPY failed: … target/cumba-oss-corej-rule-editor-rest-…: not found`     | step 3 not run, or `VERSION` does not match the built version                                                                                             |
+| `COPY failed: … dist/`                                                    | step 2 not run                                                                                                                                            |
+| rest exits with `Config data location '/etc/rule-editor/' does not exist` | an image built before the Dockerfile created that directory — rebuild with `--build`                                                                      |
+| login works, every later call answers `401`                               | the browser dropped the `Secure` session cookie: reach the editor over HTTPS or as `http://localhost` (`COOKIE_SECURE=false` only for a throw-away trial) |
+| `401 FORGE_REFUSED` at login                                              | the token cannot read the repository (the forge answers 404 there, not 401)                                                                               |
+| `502 FORGE_UNAVAILABLE`                                                   | the container cannot reach `EDITOR_FORGE_API_URL` (proxy / DNS / TLS inside Docker)                                                                       |
 
 ## Without Docker
 

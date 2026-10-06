@@ -179,7 +179,7 @@ describe("expectations", () => {
       ].join("\r\n"),
     );
     expect(setTestExpect(text, "skipped")).toBe(text.replace("expect=violation", "expect=skipped"));
-    expect(blockHasComments(text.replace("X\r\n---", "# why\r\nX\r\n---"), "ae")).toBe(true);
+    expect(blockHasComments(text.replace("X\r\n---", "# why\r\nX\r\n---"), 0)).toBe(true);
   });
 
   it("proposes the expectation lines, and the #test line only when expect= changes", () => {
@@ -246,10 +246,16 @@ describe("expectations", () => {
       "---",
       "# after the blocks",
     ].join("\n");
-    expect(blockHasComments(text, "AE")).toBe(true);
-    expect(blockHasComments(text, "dm")).toBe(false);
-    expect(blockHasComments(text, "LB")).toBe(false);
-    expect(blockHasComments("dataset AE\ncol A type=Char\ndataset DM\n# x\n", "AE")).toBe(false);
+    expect(blockHasComments(text, 0)).toBe(true);
+    expect(blockHasComments(text, 1)).toBe(false);
+    expect(blockHasComments(text, 2)).toBe(false);
+    expect(blockHasComments("dataset AE\ncol A type=Char\ndataset DM\n# x\n", 0)).toBe(false);
+    expect(blockHasComments("dataset AE\ncol A type=Char\ndataset DM\n# x\n", 1)).toBe(true);
+    // two blocks of one name are told apart by position
+    const twice =
+      "dataset AE\ncol A type=Char\n---\na\n---\ndataset AE\ncol A type=Char\n---\n# c\nb\n---\n";
+    expect(blockHasComments(twice, 0)).toBe(false);
+    expect(blockHasComments(twice, 1)).toBe(true);
   });
 
   it("diffs expectation lines", () => {

@@ -116,7 +116,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Replace the #expectViolation* lines of a scenario text with the confirmed ones (take actual as expected) */
+        /** Replace the #expectViolation* lines of a scenario text with the confirmed ones and, with expect, set the #test line's expect= to the run's proposal (take actual as expected) */
         post: operations["cdtExpectations"];
         delete?: never;
         options?: never;
@@ -150,7 +150,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Rewrite one dataset block of a scenario text from the grid; everything else stays byte for byte (400 CDT_UNREPRESENTABLE with the engine's message) */
+        /** Rewrite one dataset block of a scenario text from the grid, addressed by its index (else the first block of its name); everything else stays byte for byte (400 CDT_UNREPRESENTABLE with the engine's message) */
         post: operations["cdtSplice"];
         delete?: never;
         options?: never;
@@ -233,7 +233,7 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** The branch's authored rule schema (rule-check.schema.json) for key and enum completion and key tooltips; 404 NO_SCHEMA when the branch carries none */
+        /** The branch's authored rule schema (rule-check.schema.json) for key and enum completion and key tooltips; 404 NO_SCHEMA when the branch carries none, 422 SCHEMA_INVALID when its file is not JSON */
         get: operations["schema"];
         put?: never;
         post?: never;
@@ -355,7 +355,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Run one rule buffer against one scenario buffer in a child JVM worker (503 RUN_BUSY beyond the queue, 429 RATE_LIMITED for anonymous clients) */
+        /** Run one rule buffer against one scenario buffer in a child JVM worker: one run at a time per user or anonymous client (409 RUN_IN_PROGRESS), 503 RUN_BUSY beyond the queue, 503 WORKSPACE_BUSY when the workspace stays locked, 429 RATE_LIMITED for anonymous clients */
         post: operations["run"];
         delete?: never;
         options?: never;
@@ -440,7 +440,7 @@ export interface paths {
         };
         get?: never;
         put?: never;
-        /** Probe the forge with a personal access token and open a session; the token decides the mode (edit needs push rights AND a pushable token) */
+        /** Probe the forge with a personal access token and open a session; the token decides the mode (edit needs push rights AND a pushable token); 429 RATE_LIMITED beyond the per-client login limit; rotates the CSRF token */
         post: operations["login"];
         delete?: never;
         options?: never;
@@ -525,6 +525,9 @@ export interface components {
         };
         CdtExpectations: {
             content?: string;
+            /** @description the expect= the #test line gets: the run report's expectations.expect (violation | noViolation); null leaves the verdict */
+            expect?: string;
+            /** @description the #expectViolation* lines to write; required ([] clears them) */
             lines?: string[];
         };
         CdtParse: {
@@ -533,6 +536,11 @@ export interface components {
         CdtSplice: {
             content?: string;
             dataset?: components["schemas"]["Dataset"];
+            /**
+             * Format: int32
+             * @description the block's position in /api/cdt/parse's datasets (0-based); null addresses the first block of dataset.name — send it: a scenario may hold two blocks of one name
+             */
+            index?: number;
         };
         CdtText: {
             content?: string;
@@ -695,7 +703,9 @@ export interface components {
             ats?: number;
             /** Format: int32 */
             count?: number;
+            expect?: string;
             lines?: string[];
+            testLine?: string;
         };
         ExplorerTree: {
             anonymous?: boolean;
@@ -883,7 +893,11 @@ export interface components {
         RunResult: {
             branch?: string;
             head?: string;
+            /** @description the rule's check path the run was asked for */
+            path?: string;
             report?: components["schemas"]["RunReport"];
+            /** @description the scenario the run judged */
+            scenarioPath?: string;
         };
         Scenario: {
             coreId?: string;
