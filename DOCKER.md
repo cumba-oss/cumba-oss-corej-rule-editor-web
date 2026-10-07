@@ -12,9 +12,9 @@ two containers:
 Both images are built from **build output**, not from sources: `dist/` here and the exploded
 bundle under the rest repo's `target/`. Build first (steps 2–3), then compose (step 5).
 
-⚠ Status: the builds and the rest bundle's start-up were verified (2026-10-06); the images and
-the compose run itself were not — the sandbox they were written in has no Docker. The first
-`docker compose up` is the real test.
+Status: first real container run 2026-10-06 — rootless Podman in WSL2, as the pod of step 5b
+(the compose route hit the netavark issue there); every trap it found is in the troubleshooting
+table.
 
 ## Prerequisites
 
@@ -123,6 +123,67 @@ docker compose logs -f rule-editor-rest       # "Started RuleEditorApplication"
 Stop with `docker compose down` — the `workspaces` and `metadata-store` volumes survive;
 `docker compose down -v` deletes them (and every user's unpushed work in them).
 
+## 5b. Rootless Podman without compose — one pod
+
+`podman-compose` creates a bridge network, and on hosts whose kernel lacks parts of nftables
+(seen on WSL2) netavark then fails with `"nft" did not return successfully while applying ruleset`.
+A **pod** needs no bridge network: its containers share one network namespace and reach each other
+on `127.0.0.1`, and rootless port publishing goes through pasta. Build the images from **each
+repo's own directory** (`.` in the wrong directory builds the rest image under the web tag):
+
+```bash
+cd cumba-oss-corej-rule-editor-rest
+podman build -t rule-editor-rest .
+podman build -t rule-editor-web ../cumba-oss-corej-rule-editor-web
+
+podman pod create --name rule-editor -p 127.0.0.1:8080:80
+
+podman run -d --pod rule-editor --name rule-editor-rest \
+  -e EDITOR_REPOSITORY_URL=https://github.com/cumba-oss/cumba-oss-corej-rules.git \
+  -e EDITOR_FORGE_TYPE=github \
+  -e EDITOR_FORGE_API_URL=https://api.github.com \
+  -e EDITOR_WORKSPACE_ROOT=/var/lib/rule-editor/workspaces \
+  -e CDISC_METADATA_STORE=/var/lib/rule-editor/metadata-store/metadata-store.zip \
+  -e EDITOR_TRUSTED_PROXIES=127.0.0.1/32 \
+  -e JAVA_OPTS=-Xmx1g \
+  -v rule-editor-workspaces:/var/lib/rule-editor/workspaces \
+  -v rule-editor-metadata-store:/var/lib/rule-editor/metadata-store \
+  rule-editor-rest
+
+podman run -d --pod rule-editor --name rule-editor-web \
+  -e API_UPSTREAM=127.0.0.1:8081 -e BRAND=neutral \
+  rule-editor-web
+
+podman logs rule-editor-rest | grep Started              # "Started RuleEditorApplication"
+curl -s http://127.0.0.1:8080/api/info
+```
+
+- `API_UPSTREAM=127.0.0.1:8081`, not `localhost`: in the pod nginx reaches the rest app over the
+  shared loopback, and pinning IPv4 keeps it matching `EDITOR_TRUSTED_PROXIES=127.0.0.1/32` (the
+  compose file's pinned subnet does not exist in a pod).
+- After a rebuild, replace only the container that changed:
+  `podman rm -f rule-editor-web && podman run … rule-editor-web` (the pod and the rest container
+  stay up). Stop everything with `podman pod stop rule-editor`, remove it with
+  `podman pod rm -f rule-editor`; the named volumes survive both.
+- Alternative that keeps compose: switch netavark to iptables
+  (`~/.config/containers/containers.conf`: `[network]` `firewall_driver = "iptables"`, the
+  `iptables` package installed), remove the old network, `podman-compose up`.
+
+## 5c. WSL2 and Windows
+
+- **Use `http://127.0.0.1:8080/`, not `localhost`** — inside WSL and from the Windows browser
+  alike. `localhost` resolves to `::1` first, and the rootless port forwarding resets the IPv6
+  connection (`curl: Recv failure: Connection reset by peer`); browsers do not fall back to IPv4
+  after a reset. Stay on one host name: the session cookie belongs to the exact host you logged
+  in on.
+- `127.0.0.1` is a secure context for Chrome and Firefox, so the `Secure` session cookie works.
+  Reaching WSL by its own address (`hostname -I`, `http://172.x.x.x:8080/`) is plain HTTP to a
+  non-local host: the cookie is dropped (every call after the login answers `401`) — use
+  `127.0.0.1`, or for a throw-away trial only `-e SERVER_SERVLET_SESSION_COOKIE_SECURE=false` on
+  the rest container plus a pod published on that address.
+- With WSL's mirrored networking (`networkingMode=mirrored` in `.wslconfig`) the Hyper-V firewall
+  can block the port from Windows; allow it with `New-NetFirewallHyperVRule` (elevated PowerShell).
+
 ## 6. Log in
 
 Login name + the forge's personal access token. The token decides the mode:
@@ -138,6 +199,11 @@ a branch — the default branch is read-only — and reach it through a pull req
 
 To exercise the whole path, do by hand what the rest repo's `src/test/smoke.sh` does: login,
 Explorer, new branch, open a rule, save, commit, push, then find the commit on the forge.
+
+**Token scopes on Gitea** (when you bind the editor to a Gitea forge): **`read:user`** +
+**`read:repository`** to log in (`READ_ONLY`), plus **`write:repository`** for `EDIT`. A token
+with repository scopes only fails the editor's first login probe (`GET /user`) with
+`FORGE_REFUSED`. A token never grants more than its account has.
 
 ## The metadata store
 
@@ -157,6 +223,11 @@ scope completion and library-dependent scenarios failing with that reason.
 | login works, every later call answers `401`                               | the browser dropped the `Secure` session cookie: reach the editor over HTTPS or as `http://localhost` (`COOKIE_SECURE=false` only for a throw-away trial) |
 | `401 FORGE_REFUSED` at login                                              | the token cannot read the repository (the forge answers 404 there, not 401)                                                                               |
 | `502 FORGE_UNAVAILABLE`                                                   | the container cannot reach `EDITOR_FORGE_API_URL` (proxy / DNS / TLS inside Docker)                                                                       |
+| `"nft" did not return successfully while applying ruleset` (podman)       | netavark cannot program nftables on this kernel (WSL2) — run the pod of step 5b, or switch netavark to iptables                                           |
+| `curl: Recv failure: Connection reset by peer` on `localhost:8080`        | IPv6 (`::1`) through the rootless port forwarding — use `127.0.0.1` (step 5c)                                                                             |
+| `Login refused` / `Request failed (403)`, body `Invalid CORS request`     | the proxy forwarded `Host` without the port: an nginx image older than `proxy_set_header Host $http_host` — rebuild it; any own proxy must keep the port  |
+| `rule-editor-web` logs a Spring banner and `Port 8081 was already in use` | the web image was built from the rest directory (`podman build -t rule-editor-web .` in the wrong place) — build it from the web repo                     |
+| `FORGE_REFUSED` although the token clones fine                            | the token lacks `read:user` (Gitea) — the login probes `GET /user` first (step 6)                                                                         |
 
 ## Without Docker
 
