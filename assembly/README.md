@@ -18,8 +18,8 @@ handling — PLAN-rule-editor §4.2). Two supported shapes:
 
 2. **Two apps behind a reverse proxy** — serve these files and forward `/api` (and
    `/v3/api-docs`, `/swagger-ui.html`, `/swagger-ui/`) to the rest app. The repository's
-   `docker/nginx.conf` is the reference configuration (its `Dockerfile` builds the nginx
-   image from `dist/`); the rest repository's `docker-compose.yml` brings both up.
+   `docker/nginx.conf` is the reference configuration (its `Dockerfile` builds the SPA
+   from the sources into the nginx image); the rest repository's `docker-compose.yml` brings both up.
 
 ⛔ A cross-site deployment (SPA on one site, API on another) is **not supported**: the session
 cookie is `SameSite=Lax` and the CSRF token is session-bound.

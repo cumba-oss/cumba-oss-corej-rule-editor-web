@@ -35,6 +35,27 @@ export function versionBanner(
 }
 
 /**
+ * The quiet store notice, or `null`: without a store, that completion and library tooltips are
+ * limited (and why); and the seed's status (`engine.seedStatus`) whenever there is one — also with
+ * an open store, so that a failed or incomplete re-seed is visible while the old store serves on.
+ */
+export function storeNote(engine: EngineInfoT | null | undefined): string | null {
+  if (!engine) return null;
+  const status = (engine.seedStatus ?? "").trim();
+  const reason = engine.storeReason ?? "";
+  const parts: string[] = [];
+  if (engine.storeAvailable === false) {
+    parts.push(
+      `No metadata store on this instance${reason ? ` (${reason})` : ""}: variable completion and library tooltips are limited.`,
+    );
+  }
+  // without a store the reason already says what the seed is doing — the status would repeat it;
+  // with an open store it is the only place a failed or incomplete re-seed shows
+  if (status && engine.storeAvailable !== false) parts.push(`Metadata store seed: ${status}`);
+  return parts.length ? parts.join(" ") : null;
+}
+
+/**
  * The engine-version banner of PLAN-rule-editor §5.4 (O13): any mismatch between the branch's
  * language level and the engine's, naming both, with direction-specific text; a branch that
  * declares no level counts as level 0 ("predates"). Plus a quiet notice when the instance runs without a metadata store
@@ -42,8 +63,8 @@ export function versionBanner(
  */
 export function EngineBanner({ engine, branchLevel }: Props) {
   const banner = versionBanner(engine?.languageLevel, branchLevel);
-  const noStore = engine !== null && engine !== undefined && engine.storeAvailable === false;
-  if (!banner && !noStore) return null;
+  const note = storeNote(engine);
+  if (!banner && !note) return null;
   return (
     <>
       {banner && (
@@ -56,10 +77,9 @@ export function EngineBanner({ engine, branchLevel }: Props) {
           <Text size="sm">{banner.message}</Text>
         </Alert>
       )}
-      {noStore && (
+      {note && (
         <Text size="xs" c="dimmed" px="sm" py={2} role="note">
-          No metadata store on this instance{engine.storeReason ? ` (${engine.storeReason})` : ""}:
-          variable completion and library tooltips are limited.
+          {note}
         </Text>
       )}
     </>

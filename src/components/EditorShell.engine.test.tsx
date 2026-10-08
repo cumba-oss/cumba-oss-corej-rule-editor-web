@@ -378,6 +378,27 @@ describe("EditorShell — engine-version banner (O13) and the store notice", () 
     await waitFor(() => expect(fake.engine.analyses).toHaveLength(1));
     expect(screen.queryByRole("alert")).toBeNull();
   });
+
+  it("analyses the open rule again when the store opens, without an edit", async () => {
+    const user = userEvent.setup();
+    fake.engine.info = { ...fake.engine.info, storeAvailable: false, storeReason: "seeding" };
+    const view = renderShell(info());
+    await openRule(user);
+    await waitFor(() => expect(fake.engine.analyses).toHaveLength(1));
+    await settle(600);
+    expect(fake.engine.analyses).toHaveLength(1); // nothing changed: no second analysis
+    fake.engine.info = { ...fake.engine.info, storeAvailable: true, storeReason: "" };
+    view.rerender(
+      <EditorShell
+        info={info()}
+        session={{ ...fake.user, mode: "EDIT" }}
+        onSession={vi.fn()}
+        onLoggedOut={vi.fn()}
+      />,
+    );
+    await waitFor(() => expect(fake.engine.analyses).toHaveLength(2));
+    expect(fake.engine.analyses[1].content).toBe(fake.engine.analyses[0].content);
+  });
 });
 
 describe("EditorShell — review fold (PLAN-rule-editor web review)", () => {

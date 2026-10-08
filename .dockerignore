@@ -1,4 +1,15 @@
-# Only the built SPA and the nginx template reach the image (Dockerfile).
-*
-!dist/
-!docker/
+# The build stage builds from the SOURCES (Dockerfile): send the repo, minus build output
+# (a stale dist/ must never reach the image), installed modules, git metadata and IDE files.
+node_modules/
+dist/
+coverage/
+target/
+.git
+.gitea/
+.idea/
+.vscode/
+# vite bakes VITE_* values from .env files into dist/ — a developer's local one must not ship.
+.env*
+.claude/
+*.iml
+.flattened-pom.xml

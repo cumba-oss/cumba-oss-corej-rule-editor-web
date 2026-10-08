@@ -4,13 +4,20 @@ import type { CodelistHitT, ScopeDatasetT } from "../../api/types";
 import { descriptionAt, ITEM } from "../../engine/schemaWalk";
 import { parseYaml } from "../../util/yaml";
 import { describeVariable, findVariable, type EngineContext } from "./engineContext";
+import { displayType, renderMarkdownLine, renderSummary } from "./functionDocs";
 import { cursorContext } from "./yamlPath";
 
-/** What a tooltip shows: a title line and body lines (monospace for signatures / expressions). */
+/**
+ * What a tooltip shows: a title line, an optional summary (its first sentence, the rest behind a
+ * "more…" toggle) and body lines (monospace for signatures / expressions; `markdown` renders
+ * inline `code`, **bold** and *italic* as DOM — the function docs come from the rule guide).
+ */
 export interface TooltipContent {
   title: string;
+  summary?: string;
   lines: string[];
   mono?: boolean;
+  markdown?: boolean;
 }
 
 /** A tooltip at a token range — ready, or loaded on demand (codelists come from the server). */
@@ -188,14 +195,12 @@ export function tooltipAt(doc: string, pos: number, ctx: EngineContext): Tooltip
     if (!f) return null;
     const params = (f.parameters ?? [])
       .filter((p) => p.description)
-      .map((p) => `${p.name}${p.required ? "" : "?"}: ${p.type} — ${p.description}`);
+      .map((p) => `${p.name}${p.required ? "" : "?"}: ${displayType(p.type)} — ${p.description}`);
     return spec({
       title: f.signature ?? text,
-      lines: [
-        ...(f.summary ? [f.summary] : []),
-        ...(f.returnType ? [`returns ${f.returnType}`] : []),
-        ...params,
-      ],
+      ...(f.summary ? { summary: f.summary } : {}),
+      lines: [...(f.returnType ? [`returns ${displayType(f.returnType)}`] : []), ...params],
+      markdown: true,
     });
   }
   if (CODELIST.test(text)) {
@@ -237,10 +242,11 @@ export function renderTooltip(content: TooltipContent): HTMLElement {
   title.style.fontWeight = "600";
   title.textContent = content.title;
   dom.appendChild(title);
+  if (content.summary) dom.appendChild(renderSummary(content.summary));
   for (const line of content.lines) {
-    const p = document.createElement("div");
+    const p = content.markdown ? renderMarkdownLine(line) : document.createElement("div");
     if (content.mono) p.style.fontFamily = "var(--mantine-font-family-monospace)";
-    p.textContent = line;
+    if (!content.markdown) p.textContent = line;
     dom.appendChild(p);
   }
   return dom;

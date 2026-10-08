@@ -106,10 +106,10 @@ export const FAKE_FUNCTIONS: FunctionInfoT[] = [
 ];
 
 const SCOPE_DATASETS: ScopeDatasetT[] = [
-  { product: "sdtmig-3-3", name: "AE", datasetClass: "EVENTS", inScope: true },
-  { product: "sdtmig-3-3", name: "CM", datasetClass: "INTERVENTIONS", inScope: true },
+  { product: "standards/sdtmig/3-3", name: "AE", datasetClass: "EVENTS", inScope: true },
+  { product: "standards/sdtmig/3-3", name: "CM", datasetClass: "INTERVENTIONS", inScope: true },
   {
-    product: "sdtmig-3-3",
+    product: "standards/sdtmig/3-3",
     name: "DM",
     datasetClass: "SPECIAL PURPOSE",
     inScope: false,
@@ -126,7 +126,7 @@ const SCOPE_VARIABLES: VariableT[] = [
     role: "Identifier",
     codelists: [],
     datasets: ["AE", "CM"],
-    products: ["sdtmig-3-3"],
+    products: ["standards/sdtmig/3-3"],
     classLevel: false,
     concrete: [],
   },
@@ -138,7 +138,7 @@ const SCOPE_VARIABLES: VariableT[] = [
     role: "Identifier",
     codelists: [],
     datasets: ["AE"],
-    products: ["sdtmig-3-3"],
+    products: ["standards/sdtmig/3-3"],
     classLevel: false,
     concrete: [],
   },
@@ -150,7 +150,7 @@ const SCOPE_VARIABLES: VariableT[] = [
     role: "Topic",
     codelists: [],
     datasets: ["AE"],
-    products: ["sdtmig-3-3"],
+    products: ["standards/sdtmig/3-3"],
     classLevel: false,
     concrete: [],
   },
@@ -162,7 +162,7 @@ const SCOPE_VARIABLES: VariableT[] = [
     role: "Synonym Qualifier",
     codelists: ["C66767"],
     datasets: ["AE"],
-    products: ["sdtmig-3-3"],
+    products: ["standards/sdtmig/3-3"],
     classLevel: false,
     concrete: [],
   },
@@ -174,7 +174,7 @@ const SCOPE_VARIABLES: VariableT[] = [
     role: "Topic",
     codelists: [],
     datasets: ["EVENTS", "INTERVENTIONS"],
-    products: ["sdtmig-3-3"],
+    products: ["standards/sdtmig/3-3"],
     classLevel: true,
     concrete: ["AETERM", "CMTERM"],
   },
@@ -240,6 +240,8 @@ export class FakeEngine {
     storeReason: "",
     runTimeoutSeconds: 60,
     maxBufferBytes: 1_048_576,
+    seeding: false,
+    seedStatus: "",
   };
   /** The branch's `rules-src/LANGUAGE-LEVEL`; `null` when it declares none. */
   branchLanguageLevel: number | null = 1;
@@ -277,6 +279,8 @@ export class FakeEngine {
       storeAvailable: true,
       storeFormat: 5,
       storeReason: "",
+      seeding: false,
+      seedStatus: "",
     };
     this.branchLanguageLevel = 1;
     this.schemaAvailable = true;
@@ -381,14 +385,14 @@ export class FakeEngine {
         : undefined,
       scope: this.info.storeAvailable
         ? {
-            products: ["sdtmig-3-3"],
+            products: ["standards/sdtmig/3-3"],
             missingProducts: [],
             datasets: SCOPE_DATASETS,
             variables: SCOPE_VARIABLES,
           }
         : {
-            products: ["sdtmig-3-3"],
-            missingProducts: ["sdtmig-3-3"],
+            products: ["standards/sdtmig/3-3"],
+            missingProducts: ["standards/sdtmig/3-3"],
             datasets: [],
             variables: [],
           },

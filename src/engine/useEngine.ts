@@ -21,6 +21,8 @@ export interface AnalysisEntry {
   docs: string | undefined;
   analysis: AnalysisT | null;
   failed: string | null;
+  /** Whether the server had its metadata store when it answered (`undefined`: not known). */
+  store?: boolean;
 }
 
 export type AnalysisStatus = "none" | "pending" | "ok" | "failed";
@@ -72,8 +74,17 @@ export interface AnalysisTarget {
  * once per `diskKey`). Every change of what is being analysed invalidates the answer in flight
  * (`seq`), so an answer never lands on a buffer it does not describe — not even after an undo
  * back to content that already has its analysis. `epoch` (the branch) invalidates every entry.
+ * `store` (the server's metadata store is open, `/api/info`'s `engine.storeAvailable`) is part of
+ * what an analysis describes: when it changes — the start-up seed opened the store — the open rule
+ * is analysed again, its store-less answer staying on show until the new one lands.
  */
-export function useAnalyses(tabs: Tab[], active: Tab | undefined, epoch: string, diskKey = epoch) {
+export function useAnalyses(
+  tabs: Tab[],
+  active: Tab | undefined,
+  epoch: string,
+  diskKey = epoch,
+  store?: boolean,
+) {
   const [state, setState] = useState<{ epoch: string; byPath: Record<string, AnalysisEntry> }>({
     epoch,
     byPath: {},
@@ -125,7 +136,13 @@ export function useAnalyses(tabs: Tab[], active: Tab | undefined, epoch: string,
     const id = ++seq.current;
     if (!rulePath || content === undefined) return undefined;
     const existing = byPathRef.current[rulePath];
-    if (existing && existing.content === content && existing.docs === docs && !existing.failed) {
+    if (
+      existing &&
+      existing.content === content &&
+      existing.docs === docs &&
+      existing.store === store &&
+      !existing.failed
+    ) {
       return undefined;
     }
     const timer = setTimeout(() => {
@@ -142,13 +159,14 @@ export function useAnalyses(tabs: Tab[], active: Tab | undefined, epoch: string,
                 ? (prev.byPath[rulePath]?.analysis ?? null)
                 : (r.data.analysis ?? null),
               failed: r.problem ? `${r.problem.detail} (${r.problem.code})` : null,
+              store,
             },
           },
         }));
       });
     }, ANALYSIS_DEBOUNCE_MS);
     return () => clearTimeout(timer);
-  }, [rulePath, content, docs, epoch, retries]);
+  }, [rulePath, content, docs, epoch, retries, store]);
 
   const retry = useCallback(() => setRetries((n) => n + 1), []);
   /** Forget the saved rule read for a lone docs tab (the rule was just saved). */

@@ -66,6 +66,15 @@ describe("cursorContext", () => {
       path: ["Check"],
       blockScalar: true,
     });
+    // the chomping and indentation indicators come in either order (YAML 1.2 §8.1.1)
+    for (const header of [">2-", "|-2", "|+", ">1 # note"]) {
+      const doc = `Check:\n  expression: ${header}\n    not empty(X)`;
+      expect(cursorContext(doc, doc.length), header).toMatchObject({
+        kind: "value",
+        key: "expression",
+        blockScalar: true,
+      });
+    }
   });
 
   it("treats a blank line at an indent as a key position there", () => {

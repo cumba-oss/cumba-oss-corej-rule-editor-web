@@ -97,14 +97,14 @@ mvn verify         # the same through frontend-maven-plugin + the release zip (t
 ⭐ **Running both apps with Docker, step by step (clone → build → compose → login): [`DOCKER.md`](DOCKER.md).**
 
 Deployment shapes (bundled into the rest jar, or behind a reverse proxy, or `docker-compose`):
-[`assembly/README.md`](assembly/README.md) and the rest repo's README. `Dockerfile` builds an
-nginx image from `dist/` with [`docker/nginx.conf`](docker/nginx.conf) — the reference for any
+[`assembly/README.md`](assembly/README.md) and the rest repo's README. `Dockerfile` builds the SPA
+from the sources (a Node stage) into an nginx image with [`docker/nginx.conf`](docker/nginx.conf) — the reference for any
 reverse proxy in front of the two apps (what it forwards, on one origin; a 4 MB request-body
 cap; the SPA document's `Content-Security-Policy`, `X-Content-Type-Options: nosniff` and
 `frame-ancestors 'none'` — the CSP was measured in a headless browser: no violation, CodeMirror
 and Mantine styled); the compose file that
-pairs it with the rest container lives in `cumba-oss-corej-rule-editor-rest`. ⚠ Both were written
-without docker available: shape-checked, not run.
+pairs it with the rest container lives in `cumba-oss-corej-rule-editor-rest`. Both run for real on
+rootless Podman since 2026-10-08.
 
 CI: `.github/workflows/ci.yml` (GitHub Actions: the npm chain through frontend-maven-plugin,
 one Maven pass, a signed release asset on a tag) and `.gitea/workflows/main.yml` (the same gate

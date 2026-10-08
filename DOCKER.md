@@ -9,20 +9,22 @@ two containers:
 | `rule-editor-web`  | this repo's `Dockerfile` + [`docker/nginx.conf`](docker/nginx.conf) | nginx serves the built `dist/` and proxies `/api`, `/v3/api-docs`, `/swagger-ui*` to the rest container — the browser sees **one origin** (needed for the session cookie and CSRF) |
 | `rule-editor-rest` | the rest repo's `Dockerfile`                                        | the API on `:8081` (not published); per-user git workspaces and the metadata store on volumes                                                                                      |
 
-Both images are built from **build output**, not from sources: `dist/` here and the exploded
-bundle under the rest repo's `target/`. Build first (steps 2–3), then compose (step 5).
+Both images are built **from the sources** (multi-stage Dockerfiles: Node runs the SPA build, Maven
+the rest build, inside the image build). After every `git pull`, `docker compose up --build` is the
+whole build — there is no `dist/` or `target/` to build beforehand, and none that can be stale.
 
-Status: first real container run 2026-10-06 — rootless Podman in WSL2, as the pod of step 5b
-(the compose route hit the netavark issue there); every trap it found is in the troubleshooting
-table.
+Status: first real container run 2026-10-06 — rootless Podman in WSL2, as the pod of step 5b;
+compose on the same host since 2026-10-08 (netavark switched to iptables, step 5b). Every trap
+found is in the troubleshooting table.
 
 ## Prerequisites
 
-- JDK 25 + Maven (the rest build resolves its `net.cumba` dependencies from Maven Central,
-  or from a repository your `~/.m2/settings.xml` names for their snapshots).
-- Node 24 + npm.
-- Docker with Compose v2 (`docker compose`) — e.g. Docker Desktop with the WSL2 backend. Steps
-  2–3 can run on any machine; step 5 needs the built files where Docker can see them.
+- For a build of `main` between releases only: a `~/.m2/settings.xml` naming a Maven repository
+  that serves the `cumba-oss-*` development snapshots (step 2) — a release builds from Maven
+  Central with no settings at all. No JDK, Maven or Node is needed on the host to run the editor
+  — only to develop it.
+- Docker with Compose v2 (`docker compose`) — e.g. Docker Desktop with the WSL2 backend — or
+  rootless Podman with `podman-compose` (steps 5b, 5c).
 - A **personal access token** on the forge that hosts the rule corpus you want to edit
   (GitHub by default: a fine-grained token with _Contents: read_ on the corpus repository,
   _read and write_ for edit mode) — the editor logs in with it.
@@ -36,37 +38,70 @@ git clone https://github.com/cumba-oss/cumba-oss-corej-rule-editor-rest.git
 git clone https://github.com/cumba-oss/cumba-oss-corej-rule-editor-web.git
 ```
 
-## 2. Build the SPA → `cumba-oss-corej-rule-editor-web/dist/`
+## 2. Where the rest build's dependencies come from
 
-```bash
-cd cumba-oss-corej-rule-editor-web
-npm ci
-npm run build          # or `npm run verify` to run the full gate first
-cd ..
+The rest image runs Maven inside its build. With no settings it resolves from **Maven Central**,
+which holds every third-party dependency and every **released** `cumba-oss-*` artifact — so a
+release of the rest repo builds with nothing passed. Central hosts **no snapshots**, and between
+releases `main` pins the `cumba-oss-*` development snapshots (the rest repo's root pom,
+`dependency.cumba-oss-*.version`): built with no settings, `main` stops at the first of them
+(`Could not find artifact net.cumba:cumba-oss-bootstrap:jar:<version>-SNAPSHOT`). Those snapshots
+are published to the project's own snapshot repository, not to Central; to build `main` you need a
+Maven `settings.xml` naming a repository that serves them, given to the Maven step as the
+**optional build secret** `maven_settings` — mounted for that step only, never stored in an image
+layer. Add it with a `docker-compose.override.yml` next to the rest repo's `docker-compose.yml`
+(compose merges it in by itself) — never copy the settings into the repo:
+
+```yaml
+services:
+  rule-editor-rest:
+    build:
+      secrets:
+        - maven_settings
+secrets:
+  maven_settings:
+    file: ${HOME}/.m2/settings.xml
 ```
 
-## 3. Build the REST bundle → `cumba-oss-corej-rule-editor-rest/target/…`
+Without such a repository, run `main` without Docker instead: `mvn install` the `cumba-oss-*`
+chain bottom-up (commons, formats, datatable, corej), then the rest repo ("Without Docker" below).
+
+The first build downloads the dependencies into a build cache (several minutes); later builds
+only fetch what changed. The SPA's build needs no credentials (public npm registry).
+
+## 3. Nothing to build beforehand
+
+Earlier versions of this guide built `dist/` and `target/` on the host first and the images copied
+them — a stale one was packaged silently. The images now build from the sources; `npm run build`,
+`npm run verify` and `mvn package` on the host are for development and the gates only. The tests
+are not run in the image build — they are each repo's CI.
+
+⚠ **One exception: an upstream fix.** On `main` the rest image pulls the `cumba-oss-*` engine,
+commons and datatable as development snapshots, and its Maven step re-runs only when the rest
+repo's sources change. After a fix published only upstream (a new engine snapshot), the step is
+cached and the image keeps the old engine — rebuild that stage without the layer cache:
 
 ```bash
-cd cumba-oss-corej-rule-editor-rest
-mvn -B clean package -DskipTests     # drop -DskipTests to run the tests too
+docker compose build --no-cache rule-editor-rest && docker compose up -d     # Podman: podman-compose …
 ```
 
-Result: `target/cumba-oss-corej-rule-editor-rest-0.1.0-SNAPSHOT/cumba-oss-corej-rule-editor-rest-0.1.0-SNAPSHOT/`
-(the doubled directory is intended — the Dockerfile copies exactly that path). If the version
-differs, pass it to compose as `VERSION=<version>`.
+The deployment shape with the SPA **bundled into the rest jar** (one container) is not built by
+these Dockerfiles; build that bundle on the host (`mvn -Pbundle-web …`, "Without Docker" below).
 
 ## 4. Configure
 
 The defaults in `docker-compose.yml` bind the editor to the public corpus on **GitHub**:
 
-| variable                | default                                                   |
-| ----------------------- | --------------------------------------------------------- |
-| `EDITOR_REPOSITORY_URL` | `https://github.com/cumba-oss/cumba-oss-corej-rules.git`  |
-| `EDITOR_FORGE_TYPE`     | `github` (or `gitea`)                                     |
-| `EDITOR_FORGE_API_URL`  | `https://api.github.com` (Gitea: `https://<host>/api/v1`) |
-| `WEB_PORT`              | `8080` (on 127.0.0.1 only)                                |
-| `JAVA_OPTS`             | `-Xmx1g`                                                  |
+| variable                    | default                                                        |
+| --------------------------- | -------------------------------------------------------------- |
+| `EDITOR_REPOSITORY_URL`     | `https://github.com/cumba-oss/cumba-oss-corej-rules.git`       |
+| `EDITOR_FORGE_TYPE`         | `github` (or `gitea`)                                          |
+| `EDITOR_FORGE_API_URL`      | `https://api.github.com` (Gitea: `https://<host>/api/v1`)      |
+| `WEB_PORT`                  | `8080` (on 127.0.0.1 only)                                     |
+| `JAVA_OPTS`                 | `-Xmx1g`                                                       |
+| `EDITOR_STORE_SEED_TYPE`    | `GITHUB_PKL` — or `API`, or `NONE` (the metadata store, below) |
+| `EDITOR_STORE_SEED_PKL_TAG` | `v0.17.1` — a tag of `github.com/cdisc-org/cdisc-rules-engine` |
+| `EDITOR_STORE_SEED_API_KEY` | empty — your CDISC Library API key, for `API` only             |
 
 Override any of them in the shell or in a `.env` file next to `docker-compose.yml`, e.g.
 `EDITOR_REPOSITORY_URL=https://github.com/<you>/cumba-oss-corej-rules.git` to work on a fork.
@@ -110,13 +145,14 @@ and set `BRAND=acme`. The equivalent for `docker run`:
 
 ```bash
 cd cumba-oss-corej-rule-editor-rest
-docker compose up --build            # add -d to run in the background
+docker compose up --build            # add -d to run in the background; Podman: podman-compose up --build
+# after a git pull on Podman: podman-compose down first — `up --build` alone can keep the old containers
 ```
 
-Open <http://localhost:8080/>. Quick checks:
+Open <http://127.0.0.1:8080/> (on WSL2 `localhost` fails — step 5c). Quick checks:
 
 ```bash
-curl -s http://localhost:8080/api/info        # {"service":"corej-rule-editor-rest", … "forge":"github" …}
+curl -s http://127.0.0.1:8080/api/info        # {"service":"corej-rule-editor-rest", … "forge":"github" …}
 docker compose logs -f rule-editor-rest       # "Started RuleEditorApplication"
 ```
 
@@ -133,7 +169,7 @@ repo's own directory** (`.` in the wrong directory builds the rest image under t
 
 ```bash
 cd cumba-oss-corej-rule-editor-rest
-podman build -t rule-editor-rest .
+podman build -t rule-editor-rest .   # main between releases: add --secret id=maven_settings,src=$HOME/.m2/settings.xml (step 2)
 podman build -t rule-editor-web ../cumba-oss-corej-rule-editor-web
 
 podman pod create --name rule-editor -p 127.0.0.1:8080:80
@@ -165,9 +201,10 @@ curl -s http://127.0.0.1:8080/api/info
   `podman rm -f rule-editor-web && podman run … rule-editor-web` (the pod and the rest container
   stay up). Stop everything with `podman pod stop rule-editor`, remove it with
   `podman pod rm -f rule-editor`; the named volumes survive both.
-- Alternative that keeps compose: switch netavark to iptables
-  (`~/.config/containers/containers.conf`: `[network]` `firewall_driver = "iptables"`, the
-  `iptables` package installed), remove the old network, `podman-compose up`.
+- Alternative that keeps compose (used since 2026-10-08): switch netavark to iptables —
+  `~/.config/containers/containers.conf`: `[network]` `firewall_driver = "iptables"`, the
+  `iptables` package installed — then `podman-compose down`, remove the half-created network
+  (`podman network ls`, `podman network rm …`) and `podman-compose up --build` again.
 
 ## 5c. WSL2 and Windows
 
@@ -205,24 +242,44 @@ Explorer, new branch, open a rule, save, commit, push, then find the commit on t
 with repository scopes only fails the editor's first login probe (`GET /user`) with
 `FORGE_REFUSED`. A token never grants more than its account has.
 
-## The metadata store
+## The metadata store — seeded on the first start
 
-Analysis, completion, tooltips and scenario runs read the engine's own **metadata store**
-(CDISC Library content, store format 5), which is not shipped: seed it once and put the file
-into the `metadata-store` volume as `metadata-store.zip` — the rest repo's `docker-compose.yml`
-header says how. Without it the editor still browses, edits, analyses and runs, with empty
-scope completion and library-dependent scenarios failing with that reason.
+Analysis, completion of variables and Scope values, the library tooltips and scenario runs read
+the CDISC Library content from the engine's own **metadata store** (store format 5) in the
+`metadata-store` volume. The rest container seeds it itself, in the background, when the volume
+holds none:
+
+- `GITHUB_PKL` (default): from the CDISC rules engine's published cache at the tag
+  `EDITOR_STORE_SEED_PKL_TAG` — one download of about 80 MB, about half a minute depending on
+  the connection (measured: 26 s for the whole first seed); the store is about 4.5 MB. `API`: from the CDISC Library API with `EDITOR_STORE_SEED_API_KEY` — several
+  minutes (about 860 requests). `NONE`: no seeding (mount a store of your own).
+- The editor answers at once. While seeding, it shows _"No metadata store on this instance
+  (metadata store is being seeded (GITHUB_PKL v0.17.1)…) … Metadata store seed: seeding
+  (GITHUB_PKL v0.17.1)…"_ and clears the notice by itself when the store opens; a failure shows
+  _"metadata store seeding failed (…): reason"_ and the editor keeps running without a store
+  (it still browses, edits, analyses and runs, with empty scope completion and
+  library-dependent scenarios failing with that reason).
+- The store remembers its source (`metadata-store.zip.seed.json` beside it): change the type or
+  the tag and restart, and it is re-seeded — the old store serves until the new one is ready,
+  and the notice shows the re-seed (_"Metadata store seed: seeding (GITHUB_PKL v0.18.0)…"_). A
+  failed or incomplete re-seed stays visible in the notice while the old store serves on
+  (_"Metadata store seed: seed failed (GITHUB_PKL v0.18.0): reason"_, _"… incomplete (…): …"_).
+  To force a re-seed, delete `metadata-store.zip` from the volume and restart.
+- A store you put into the volume yourself (no `.seed.json` beside it, at the engine's store format 5) is never touched; one in an older format is re-seeded, one from a newer engine never.
+- The API key is read by the seeder only — never logged, never served, never used by a
+  validation run. The store is the only CDISC Library source the editor evaluates against.
 
 ## Troubleshooting
 
 | symptom                                                                   | cause                                                                                                                                                     |
 | ------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `COPY failed: … target/cumba-oss-corej-rule-editor-rest-…: not found`     | step 3 not run, or `VERSION` does not match the built version                                                                                             |
-| `COPY failed: … dist/`                                                    | step 2 not run                                                                                                                                            |
+| `Could not find artifact net.cumba:cumba-oss-…:<version>-SNAPSHOT`        | a build of `main` with no repository serving the `cumba-oss-*` development snapshots — pass the `maven_settings` secret, or build a release (step 2)      |
+| `cumba brand: BRAND="neutral" has no …/brand.css; available:` (empty)     | an image whose SPA predates the brand kit — rebuild with `--build`                                                                                        |
 | rest exits with `Config data location '/etc/rule-editor/' does not exist` | an image built before the Dockerfile created that directory — rebuild with `--build`                                                                      |
 | login works, every later call answers `401`                               | the browser dropped the `Secure` session cookie: reach the editor over HTTPS or as `http://localhost` (`COOKIE_SECURE=false` only for a throw-away trial) |
 | `401 FORGE_REFUSED` at login                                              | the token cannot read the repository (the forge answers 404 there, not 401)                                                                               |
 | `502 FORGE_UNAVAILABLE`                                                   | the container cannot reach `EDITOR_FORGE_API_URL` (proxy / DNS / TLS inside Docker)                                                                       |
+| a change does not show after `podman-compose up --build`                  | podman-compose rebuilt the images but kept the RUNNING containers on the old ones — `podman-compose down`, then `up --build`; reload with Ctrl+Shift+R    |
 | `"nft" did not return successfully while applying ruleset` (podman)       | netavark cannot program nftables on this kernel (WSL2) — run the pod of step 5b, or switch netavark to iptables                                           |
 | `curl: Recv failure: Connection reset by peer` on `localhost:8080`        | IPv6 (`::1`) through the rootless port forwarding — use `127.0.0.1` (step 5c)                                                                             |
 | `Login refused` / `Request failed (403)`, body `Invalid CORS request`     | the proxy forwarded `Host` without the port: an nginx image older than `proxy_set_header Host $http_host` — rebuild it; any own proxy must keep the port  |

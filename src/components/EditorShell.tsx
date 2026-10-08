@@ -191,7 +191,7 @@ export function EditorShell({ info, session, onSession, onLoggedOut }: Props) {
     retry: retryAnalysis,
     target: analysisTarget,
     forgetDisk,
-  } = useAnalyses(tabs.tabs, current, epoch, cacheKey);
+  } = useAnalyses(tabs.tabs, current, epoch, cacheKey, info?.engine?.storeAvailable);
   const catalogues = useCatalogues(cacheKey, true);
   /** The rule the panel and the run are about: the active rule / docs tab's, or a scenario's. */
   const ruleId = current

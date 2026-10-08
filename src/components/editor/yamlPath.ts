@@ -27,7 +27,11 @@ interface Frame {
 }
 
 const KEY = /^([A-Za-z_$][\w$.-]*|"[^"]*"|'[^']*')\s*:(?=\s|$)/;
-const BLOCK_SCALAR = /^[|>][+-]?\d*\s*(?:#.*)?$/;
+/**
+ * A block scalar header: `|` or `>`, then the chomping indicator and the indentation digit in
+ * either order (YAML 1.2 §8.1.1: `|-`, `>2`, `|+1`, `>1-`), then an optional comment.
+ */
+export const BLOCK_SCALAR = /^[|>](?:[+-]?\d*|\d*[+-]?)\s*(?:#.*)?$/;
 
 function indentOf(line: string): number {
   return /^\s*/.exec(line)![0].length;

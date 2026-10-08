@@ -5,7 +5,7 @@ import { fake } from "../../test/handlers";
 import { FAKE_FUNCTIONS, FAKE_SCHEMA } from "../../test/fakeEngine";
 import type { EngineContext } from "./engineContext";
 import { describeVariable, EMPTY_CONTEXT, findVariable } from "./engineContext";
-import { ruleCompletionSource } from "./ruleCompletion";
+import { ruleCompletionSource, scopeAxisValues } from "./ruleCompletion";
 import {
   bindingExpression,
   expansionOf,
@@ -78,6 +78,133 @@ function labels(doc: string, pos: number, ctx: EngineContext = context, explicit
   return (complete(doc, pos, ctx, explicit)?.options ?? []).map((o) => o.label);
 }
 
+describe("Scope completion", () => {
+  // an SDTM product with prose structures plus an ADaM product (structure entries: the class and
+  // the structure are the token), as the rest app's scope universe reports them
+  const scoped: EngineContext = {
+    ...context,
+    analysis: {
+      ...analysis,
+      scope: {
+        ...analysis.scope,
+        datasets: [
+          {
+            product: "standards/sdtmig/3-3",
+            name: "AE",
+            datasetClass: "EVENTS",
+            dataStructure: "One record per adverse event per subject",
+          },
+          { product: "standards/sdtmig/3-3", name: "DM", datasetClass: "SPECIAL PURPOSE" },
+          {
+            product: "standards/adam/adamig-1-3",
+            name: "ADSL",
+            datasetClass: "SUBJECT LEVEL ANALYSIS DATASET",
+            dataStructure: "SUBJECT LEVEL ANALYSIS DATASET",
+          },
+          {
+            product: "standards/adam/adamig-1-3",
+            name: "BDS",
+            datasetClass: "BASIC DATA STRUCTURE",
+            dataStructure: "BASIC DATA STRUCTURE",
+          },
+        ],
+      },
+    },
+  };
+  const item = (axis: string, typed = "") => `Scope:\n  ${axis}:\n    Include:\n    - ${typed}`;
+
+  it("offers each axis its own known values, never variables", () => {
+    expect(scopeAxisValues(scoped, "Domains")).toEqual(["AE", "DM"]);
+    expect(scopeAxisValues(scoped, "Datasets")).toEqual(["AE", "DM"]);
+    expect(scopeAxisValues(scoped, "Classes")).toEqual([
+      "BASIC DATA STRUCTURE",
+      "EVENTS",
+      "SPECIAL PURPOSE",
+      "SUBJECT LEVEL ANALYSIS DATASET",
+    ]);
+    // the SDTM prose structure is not a token
+    expect(scopeAxisValues(scoped, "Data_Structures")).toEqual([
+      "BASIC DATA STRUCTURE",
+      "SUBJECT LEVEL ANALYSIS DATASET",
+    ]);
+    expect(scopeAxisValues(scoped, "Subclasses")).toEqual([]);
+    const doc = item("Data_Structures");
+    const opts = complete(doc, doc.length, scoped)!.options;
+    expect(opts.map((o) => o.label)).toEqual([
+      "BASIC DATA STRUCTURE",
+      "SUBJECT LEVEL ANALYSIS DATASET",
+    ]);
+    expect(opts[1]).toMatchObject({ apply: '"SUBJECT LEVEL ANALYSIS DATASET"', detail: "ADSL" });
+    expect(opts.map((o) => o.label)).not.toContain("USUBJID");
+  });
+
+  it("replaces from the open quote, so a multi-word token is not doubled", () => {
+    const doc = item("Data_Structures", '"SUBJECT LE');
+    const result = complete(doc, doc.length, scoped)!;
+    expect(result.from).toBe(doc.lastIndexOf('"') + 1);
+    expect(result.options.find((o) => o.label.startsWith("SUBJECT"))!.apply).toBe(
+      "SUBJECT LEVEL ANALYSIS DATASET",
+    );
+  });
+
+  it("replaces the whole scalar, plain or quoted, in items, values and flow sequences", () => {
+    /** The completion at the end of `doc`: its from, and the structure token's apply. */
+    const take = (doc: string) => {
+      const result = complete(doc, doc.length, scoped)!;
+      const token = result.options.find((o) => o.label === "SUBJECT LEVEL ANALYSIS DATASET")!;
+      return { from: result.from, apply: token.apply };
+    };
+    const quotedToken = '"SUBJECT LEVEL ANALYSIS DATASET"';
+    // a plain list item: from the scalar's start, quoted on the way in
+    let doc = item("Data_Structures", "SUBJECT LE");
+    expect(take(doc)).toEqual({ from: doc.lastIndexOf("SUBJECT"), apply: quotedToken });
+    // single-quoted: inside the quotes, bare
+    doc = item("Data_Structures", "'SUBJECT LE");
+    expect(take(doc)).toEqual({
+      from: doc.lastIndexOf("'") + 1,
+      apply: "SUBJECT LEVEL ANALYSIS DATASET",
+    });
+    // an inline Include value, plain
+    doc = "Scope:\n  Data_Structures:\n    Include: SUBJECT LE";
+    expect(take(doc)).toEqual({ from: doc.lastIndexOf("SUBJECT"), apply: quotedToken });
+    // a flow sequence: the element the cursor is in, quoted or plain
+    doc = 'Scope:\n  Data_Structures:\n    Exclude: ["BASIC DATA STRUCTURE", "SUBJECT LE';
+    expect(take(doc)).toEqual({
+      from: doc.lastIndexOf('"') + 1,
+      apply: "SUBJECT LEVEL ANALYSIS DATASET",
+    });
+    doc = "Scope:\n  Data_Structures:\n    Include: [BASIC DATA STRUCTURE, SUBJECT LE";
+    expect(take(doc)).toEqual({ from: doc.lastIndexOf("SUBJECT"), apply: quotedToken });
+    // past a closed quoted scalar there is nothing to complete
+    doc = 'Scope:\n  Data_Structures:\n    Include: "ADSL" ';
+    expect(complete(doc, doc.length, scoped)).toBeNull();
+  });
+
+  it("offers axis values only under an axis' Include / Exclude", () => {
+    for (const doc of [
+      "Scope:\n  include_split_datasets: ",
+      "Scope:\n  Domains:\n    Other: ",
+      "Scope:\n  Domains:\n    Other:\n    - ",
+    ]) {
+      const got = (complete(doc, doc.length, scoped)?.options ?? []).map((o) => o.label);
+      expect(got, JSON.stringify(doc)).not.toContain("AE");
+      expect(got, JSON.stringify(doc)).not.toContain("USUBJID");
+    }
+    const doc = "Scope:\n  Domains:\n    Exclude:\n    - ";
+    expect(complete(doc, doc.length, scoped)!.options.map((o) => o.label)).toContain("AE");
+  });
+
+  it("completes a scalar Scope value too, and nothing without a store", () => {
+    const doc = 'Scope:\n  Classes:\n    Include: "EV';
+    expect(complete(doc, doc.length, scoped)!.options.map((o) => o.label)).toContain("EVENTS");
+    const empty = {
+      ...scoped,
+      analysis: { ...scoped.analysis!, scope: { ...scoped.analysis!.scope!, datasets: [] } },
+    };
+    expect(complete(item("Data_Structures"), item("Data_Structures").length, empty)).toBeNull();
+  });
+});
+
 describe("ruleCompletionSource", () => {
   it("offers schema keys at the cursor's path, applied with a colon, and none without a schema", () => {
     const doc = "Core:\n  Id: x\nScope:\n  Do";
@@ -119,7 +246,7 @@ describe("ruleCompletionSource", () => {
     expect(seq).toMatchObject({
       type: "variable",
       detail: "integer · AE",
-      info: "Sequence Number — sdtmig-3-3",
+      info: "Sequence Number — standards/sdtmig/3-3",
     });
     // no function in a plain value
     expect(opts.map((o) => o.label)).not.toContain("empty");
@@ -132,9 +259,12 @@ describe("ruleCompletionSource", () => {
     expect(empty).toMatchObject({
       type: "function",
       detail: "empty(value)",
-      apply: "empty(",
-      info: "Whether the value is missing.",
     });
+    expect(typeof empty.apply).toBe("function"); // `empty()`, caret inside (applyFunction)
+    // the info is rendered DOM: the summary's first sentence
+    const info = (empty.info as (c: typeof empty) => HTMLElement)(empty);
+    expect(info.textContent).toBe("Whether the value is missing.");
+    expect(opts.find((o) => o.label === "count")!.info).toBeUndefined(); // no summary, no info
     expect(opts.find((o) => o.label === "$t")).toMatchObject({
       type: "variable",
       detail: "binding",
@@ -180,7 +310,7 @@ describe("tooltipAt", () => {
     expect(resolveScopeValue(context, "ALL").map((d) => d.name)).toEqual(["AE", "CM"]);
     expect(tooltipAt(RULE, at('    - "AE"', 7), context)?.content).toEqual({
       title: "AE resolves to",
-      lines: ["AE (EVENTS) — sdtmig-3-3"],
+      lines: ["AE (EVENTS) — standards/sdtmig/3-3"],
     });
     expect(tooltipAt(RULE, at('  Id: "CDISC-CG0270"', 8), context)?.content).toEqual({
       title: "CDISC-CG0270 — related rules",
@@ -197,7 +327,9 @@ describe("tooltipAt", () => {
   it("describes functions, variables, --X expansions, bindings and &NAME& tokens", () => {
     expect(tooltipAt(RULE, at("var_label(AEDECOD)", 2), context)?.content).toEqual({
       title: "var_label(name, source?)",
-      lines: ["The label of a variable.", "returns string"],
+      summary: "The label of a variable.",
+      lines: ["returns string"],
+      markdown: true,
     });
     expect(tooltipAt(RULE, at("var_label(AEDECOD)", 12), context)?.content).toEqual({
       title: "AEDECOD",
@@ -205,14 +337,14 @@ describe("tooltipAt", () => {
         "Dictionary-Derived Term · text · Req · Synonym Qualifier",
         "codelists: C66767",
         "in: AE",
-        "versions: sdtmig-3-3",
+        "versions: standards/sdtmig/3-3",
       ],
     });
     expect(tooltipAt(RULE, at("--TERM = ", 2), context)?.content?.lines).toEqual([
       "Reported Term · text · Req · Topic",
       "stands for: AETERM, CMTERM",
       "in: EVENTS, INTERVENTIONS",
-      "versions: sdtmig-3-3",
+      "versions: standards/sdtmig/3-3",
     ]);
     expect(tooltipAt(RULE, at("not empty($t)", 11), context)?.content).toEqual({
       title: "Binding $t",
@@ -264,6 +396,40 @@ describe("tooltipAt", () => {
     expect(dom.children).toHaveLength(3);
     expect(dom.children[0].textContent).toBe("T");
     expect((dom.children[1] as HTMLElement).style.fontFamily).toContain("monospace");
+    // plain lines keep their markdown characters literal
+    expect(renderTooltip({ title: "T", lines: ["`x`"] }).children[1].innerHTML).toBe("`x`");
+  });
+
+  it("shows a function's first sentence, inline markdown, and UNKNOWN as any", () => {
+    const fn = {
+      name: "empty",
+      signature: "empty(x)",
+      returnType: "boolean",
+      summary:
+        'True when the value is missing or `""`. Prefer `not empty(x)`; **not** `is_missing`.',
+      parameters: [
+        { name: "x", type: "UNKNOWN", required: true, description: "The *value* to read" },
+        { name: "y", type: "STRING", required: false, description: "A `name`" },
+      ],
+    };
+    const content = tooltipAt("x: empty(A)", 4, { ...context, functions: [fn] })!.content!;
+    expect(content.lines).toEqual([
+      "returns boolean",
+      "x: any — The *value* to read",
+      "y?: STRING — A `name`",
+    ]);
+    const dom = renderTooltip(content);
+    const summary = dom.querySelector(".rule-doc-summary")!;
+    expect(summary.firstElementChild!.textContent).toBe('True when the value is missing or "".');
+    const more = summary.querySelector("button")!;
+    expect(more.textContent).toBe("more…");
+    more.click();
+    expect(summary.querySelector("strong")?.textContent).toBe("not");
+    expect(more.textContent).toBe("less");
+    expect(dom.children[2].textContent).toBe("returns boolean");
+    expect(dom.children[3].querySelector("em")?.textContent).toBe("value");
+    expect(dom.children[3].textContent).toBe("x: any — The value to read");
+    expect(dom.children[4].querySelector("code")?.textContent).toBe("name");
   });
 });
 

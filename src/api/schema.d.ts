@@ -675,6 +675,10 @@ export interface components {
             maxBufferBytes?: number;
             /** Format: int64 */
             runTimeoutSeconds?: number;
+            /** @description the last or ongoing seed's state, whether or not a store is open (e.g. 'seeding (API)…', 'seed failed (API): …', 'incomplete (API): …'); empty when there is nothing to say */
+            seedStatus?: string;
+            /** @description true exactly while a seed of the store runs (first seed or re-seed) */
+            seeding?: boolean;
             storeAvailable?: boolean;
             /**
              * Format: int32
