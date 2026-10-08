@@ -501,6 +501,7 @@ export interface components {
             coreId?: string;
             derived?: components["schemas"]["Derived"];
             diagnostics?: components["schemas"]["Diagnostic"][];
+            joined?: components["schemas"]["Joined"][];
             loaded?: boolean;
             parked?: boolean;
             referencedVariables?: components["schemas"]["VariableRef"][];
@@ -783,6 +784,11 @@ export interface components {
             id?: string;
             path?: string;
             snippets?: components["schemas"]["Snippet"][];
+        };
+        Joined: {
+            joinType?: string;
+            name?: string;
+            variables?: components["schemas"]["Variable"][];
         };
         LoginRequest: {
             /**

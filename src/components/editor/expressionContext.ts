@@ -16,6 +16,7 @@
  * `unknown`, and the completion then falls back to the operand list rather than hide things.
  */
 
+import { MATCHED_FLAG } from "./engineContext";
 import { BLOCK_SCALAR } from "./yamlPath";
 
 /** A call whose argument the cursor starts: what its earlier arguments already bound. */
@@ -30,7 +31,17 @@ export interface CallArgument {
 
 export type ExpressionPosition =
   | { kind: "unknown" }
-  | { kind: "operand"; call?: CallArgument }
+  | {
+      kind: "operand";
+      call?: CallArgument;
+      /**
+       * A boolean position, where a join-match flag `<D>._matched_` may stand
+       * (`StageAChecker.collectMatchedFlags`): a whole condition's frame (the top level, a group
+       * opened at a boolean position, the argument of `joined(…)`), at its start or right after
+       * `and` / `or` / `not` — never after a comparison, `in` or an arithmetic operator.
+       */
+      boolean?: boolean;
+    }
   | { kind: "operator"; operators: string[] };
 
 /**
@@ -69,6 +80,7 @@ type Kind =
   | "operand" // a number, string or quoted reference: arithmetic may follow
   | "literal" // a regex, `true`, `false`: an operand the lexer reads no arithmetic after
   | "ident" // an identifier (also an operand) — a call when `(` follows
+  | "flag" // a join-match flag `<D>._matched_`: a boolean condition, only and / or may follow
   | "lparen"
   | "rparen"
   | "lbracket"
@@ -99,6 +111,8 @@ interface Frame {
   argName?: string;
   /** A comparison / membership operator already in the current comparison (they do not chain). */
   compared: boolean;
+  /** The frame stands where a boolean is expected (a group opened there, joined's argument). */
+  boolean: boolean;
 }
 
 /** The one call whose argument is a whole condition (`CheckExpressionParser.parseCall`). */
@@ -114,11 +128,20 @@ const KEYWORDS: Record<string, Kind> = {
 };
 
 const endsOperand = (k: Kind | undefined) =>
-  k === "operand" || k === "literal" || k === "ident" || k === "rparen" || k === "rbracket";
+  k === "operand" ||
+  k === "literal" ||
+  k === "ident" ||
+  k === "flag" ||
+  k === "rparen" ||
+  k === "rbracket";
 
-/** `ExpressionLexer.afterOperand`: `+ - * /` are arithmetic only after these (not a regex / boolean). */
+/**
+ * `ExpressionLexer.afterOperand`: `+ - * /` are arithmetic only after these (not a regex /
+ * boolean). A flag lexes as the identifier it is; that arithmetic on it is refused is the
+ * checker's business, and the operator list's.
+ */
 const takesArithmetic = (k: Kind | undefined) =>
-  k === "operand" || k === "ident" || k === "rparen" || k === "rbracket";
+  k === "operand" || k === "ident" || k === "flag" || k === "rparen" || k === "rbracket";
 
 const isLetter = (c: string) => /\p{L}/u.test(c);
 const isIdentStart = (c: string) => isLetter(c) || c === "_" || c === "$" || c === "*";
@@ -170,7 +193,15 @@ function identEnd(text: string, at: number): number {
 export function classifyExpression(text: string): ExpressionPosition {
   const unknown: ExpressionPosition = { kind: "unknown" };
   const stack: Frame[] = [
-    { kind: "group", full: true, positionals: 0, named: [], tokens: 0, compared: false },
+    {
+      kind: "group",
+      full: true,
+      positionals: 0,
+      named: [],
+      tokens: 0,
+      compared: false,
+      boolean: true,
+    },
   ];
   const top = () => stack[stack.length - 1];
   let prev: Kind | undefined;
@@ -178,6 +209,18 @@ export function classifyExpression(text: string): ExpressionPosition {
   let prevText = "";
   /** The last `=` was not a keyword argument's (a stray or half-typed `==`). */
   let strayEq = false;
+
+  /** Whether the next operand stands where a boolean is expected (see the result's `boolean`). */
+  const atBoolean = (): boolean => {
+    const frame = top();
+    if (!frame.full || !frame.boolean) return false;
+    if (frame.tokens === 0 || prev === "and" || prev === "or") return true;
+    // `not` at the frame's start or after and / or / not
+    return (
+      prev === "not" &&
+      (frame.tokens === 1 || beforePrev === "and" || beforePrev === "or" || beforePrev === "not")
+    );
+  };
 
   const emit = (kind: Kind, value = "") => {
     const frame = top();
@@ -216,6 +259,8 @@ export function classifyExpression(text: string): ExpressionPosition {
     } else if (c === "(") {
       const call = prev === "ident";
       const name = prevText;
+      // `joined(…)`'s argument is a boolean position wherever the call stands (collectMatchedFlags)
+      const boolean = call ? name === JOINED : atBoolean();
       emit("lparen");
       stack.push({
         kind: call ? "call" : "group",
@@ -226,6 +271,7 @@ export function classifyExpression(text: string): ExpressionPosition {
         named: [],
         tokens: 0,
         compared: false,
+        boolean,
       });
       i++;
     } else if (c === "[") {
@@ -237,6 +283,7 @@ export function classifyExpression(text: string): ExpressionPosition {
         named: [],
         tokens: 0,
         compared: false,
+        boolean: false,
       });
       i++;
     } else if (c === ")" || c === "]") {
@@ -293,7 +340,7 @@ export function classifyExpression(text: string): ExpressionPosition {
       const end = identEnd(text, i);
       if (end < 0 || end === i) return unknown;
       const word = text.slice(i, end);
-      emit(KEYWORDS[word] ?? "ident", word);
+      emit(KEYWORDS[word] ?? (MATCHED_FLAG.test(word) ? "flag" : "ident"), word);
       i = end;
     } else {
       return unknown;
@@ -302,6 +349,11 @@ export function classifyExpression(text: string): ExpressionPosition {
 
   if (strayEq) return unknown;
   const frame = top();
+  if (prev === "flag") {
+    // a boolean condition (D88b): no comparison, membership or arithmetic on it — and outside a
+    // whole condition's frame it is misused anyway
+    return { kind: "operator", operators: frame.full ? [...LOGICAL_OPERATORS] : [] };
+  }
   if (endsOperand(prev)) {
     const arithmetic = takesArithmetic(prev) ? [...ARITHMETIC_OPERATORS] : [];
     // a list element, a call argument (but joined's), a keyword value: one arithmetic operand
@@ -315,13 +367,15 @@ export function classifyExpression(text: string): ExpressionPosition {
   if (prev === "not" && endsOperand(beforePrev)) {
     return frame.full && !frame.compared ? { kind: "operator", operators: ["in"] } : unknown;
   }
+  const boolean = atBoolean();
   if (frame.kind === "call" && frame.tokens === 0 && frame.name) {
     return {
       kind: "operand",
       call: { name: frame.name, positionals: frame.positionals, named: [...frame.named] },
+      ...(boolean ? { boolean } : {}),
     };
   }
-  return { kind: "operand" };
+  return boolean ? { kind: "operand", boolean } : { kind: "operand" };
 }
 
 /** Undo a YAML double-quoted scalar's escapes (`\"`, `\\`; any other escape keeps its char). */

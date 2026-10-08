@@ -8,9 +8,18 @@ import {
 } from "@codemirror/autocomplete";
 import type { Extension } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import type { FunctionInfoT } from "../../api/types";
+import type { FunctionInfoT, JoinedDatasetT } from "../../api/types";
 import { enumAt, ITEM, keysAt } from "../../engine/schemaWalk";
-import { EXPRESSION_KEYS, variablesOf, type EngineContext } from "./engineContext";
+import {
+  EXPRESSION_KEYS,
+  isLeftJoin,
+  joinedNamed,
+  joinedOf,
+  MATCHED,
+  matchEntries,
+  variablesOf,
+  type EngineContext,
+} from "./engineContext";
 import {
   classifyExpression,
   expressionBefore,
@@ -26,7 +35,10 @@ import { cursorContext, type CursorContext } from "./yamlPath";
  * The completion of PLAN-rule-editor §5.4: keys and enum values from the branch's schema at the
  * cursor's YAML path (no schema ⇒ no key completion), variables from the analysis' scope universe
  * (SDTM in `--` form, tagged with the datasets / products they occur in), functions with their
- * signature, `$binding` names from the buffer's own `Bindings`.
+ * signature, `$binding` names from the buffer's own `Bindings`, and the qualified names of the
+ * datasets joined via `Match_Datasets` (`DM.RFSTDTC`, `DM._matched_`; {@link joinedOptions}). A
+ * `Match_Datasets` entry's `Filter` runs on that dataset's own rows: its variables bare, functions
+ * — nothing of the primary ({@link filterOptions}).
  */
 export function ruleCompletionSource(getContext: () => EngineContext): CompletionSource {
   return (cm: CompletionContext): CompletionResult | null => {
@@ -50,7 +62,8 @@ export function ruleCompletionSource(getContext: () => EngineContext): Completio
       for (const v of variablesOf(engine.analysis)) {
         options.push({ label: v.name ?? "", type: v.classLevel ? "class" : "variable" });
       }
-      return options.length ? { from: word.from, options, validFor: /^[\w$&.-]*$/ } : null;
+      options.push(...qualifiedValueOptions(engine, ctx, cm));
+      return wordResult(engine, word, options);
     }
     if (ctx.kind === "key") {
       if (!engine.schema) return null;
@@ -80,6 +93,9 @@ export function ruleCompletionSource(getContext: () => EngineContext): Completio
     // inside an expression: where the grammar wants an operator, only operators (owner 2026-10-08)
     const position = expressionPositionAt(cm.state.doc.toString(), word.from, key);
     if (position.kind === "operator") return operatorResult(cm, word.from, position.operators);
+    if (ctx.path[0] === "Match_Datasets" && key === "Filter") {
+      return wordResult(engine, word, [...options, ...filterOptions(engine, cm, position)]);
+    }
     for (const v of variablesOf(engine.analysis)) {
       const where = v.classLevel ? (v.concrete ?? []).join(", ") : (v.datasets ?? []).join(", ");
       options.push({
@@ -103,21 +119,180 @@ export function ruleCompletionSource(getContext: () => EngineContext): Completio
       for (const name of engine.analysis?.bindings ?? []) {
         options.push({ label: name, type: "variable", detail: "binding", boost: 2 });
       }
-      for (const f of engine.functions) {
-        const summary = f.summary;
-        options.push({
-          label: f.name ?? "",
-          type: "function",
-          detail: f.signature ?? undefined,
-          // the guide's summary: first sentence, inline markdown rendered, the rest behind "more…"
-          info: summary ? () => renderSummary(summary) : undefined,
-          apply: applyFunction(f.name ?? ""),
-        });
-      }
+      // the flag only where a boolean stands (StageAChecker.collectMatchedFlags)
+      options.push(...joinedOptions(engine, position.kind === "operand" && !!position.boolean));
+      options.push(...functionOptions(engine.functions));
+    } else {
+      options.push(...qualifiedValueOptions(engine, ctx, cm));
     }
-    if (options.length === 0) return null;
-    return { from: word.from, options, validFor: /^[\w$&.-]*$/ };
+    return wordResult(engine, word, options);
   };
+}
+
+/** The functions, applied as `name()`. */
+function functionOptions(functions: FunctionInfoT[]): Completion[] {
+  return functions.map((f) => {
+    const summary = f.summary;
+    return {
+      label: f.name ?? "",
+      type: "function",
+      detail: f.signature ?? undefined,
+      // the guide's summary: first sentence, inline markdown rendered, the rest behind "more…"
+      info: summary ? () => renderSummary(summary) : undefined,
+      apply: applyFunction(f.name ?? ""),
+    };
+  });
+}
+
+/** The calls a `Filter` may not make: no joined rows to quantify over before the join. */
+const NOT_IN_FILTER = new Set([JOINED, "any", "all", "none"]);
+
+/**
+ * The completion inside a `Match_Datasets` entry's `Filter`. The filter is evaluated on that
+ * dataset's OWN rows before the join (`StageAChecker.checkFilterRefs`): a dotted name, a
+ * `_matched_` flag or a `$binding` is FILTER_LEFT_REFERENCE, a wildcard and a quantifier /
+ * `joined(…)` FILTER_INVALID. So: the entry's own variables bare (from the analysis' `joined`,
+ * the entry found by the `Name` of the entry the cursor is in; none for an entry the server does
+ * not list), named arguments at a call's argument, and the functions but those four.
+ */
+function filterOptions(
+  engine: EngineContext,
+  cm: CompletionContext,
+  position: ExpressionPosition,
+): Completion[] {
+  const options: Completion[] = [];
+  const entry = entryAt(cm.state.doc.toString(), cm.pos);
+  const joined = entry ? joinedNamed(engine.analysis, entry.name) : undefined;
+  for (const v of joined?.variables ?? []) {
+    if (!v.name || v.classLevel) continue;
+    options.push({
+      label: v.name,
+      type: "variable",
+      detail: [`${joined!.name}`, v.type].filter(Boolean).join(" · "),
+      info: v.label || undefined,
+    });
+  }
+  if (position.kind === "operand" && position.call) {
+    const named = namedArgumentOptions(engine.functions, position.call);
+    if (position.call.named.length > 0) return named;
+    options.push(...named);
+  }
+  options.push(
+    ...functionOptions(engine.functions.filter((f) => !NOT_IN_FILTER.has(f.name ?? ""))),
+  );
+  return options;
+}
+
+/** The `Match_Datasets` entry (block style) the offset `pos` is in, by its `Name`. */
+function entryAt(doc: string, pos: number) {
+  const entries = matchEntries(doc);
+  let index = -1;
+  entries.forEach((e, i) => {
+    if (e.from <= pos) index = i;
+  });
+  return index < 0 ? undefined : { ...entries[index], index, entries };
+}
+
+/**
+ * The qualified joined names a non-expression value offers (a list item or an inline / flow
+ * value): `Output_Variables`, `Requirements.Variables.All` / `All_Or_None` and the like carry
+ * `DM.USUBJID` — never `_matched_`, a flag and no variable. Under `Match_Datasets` only a `Keys`
+ * item: a qualified key names an EARLIER entry, an inner one ({@link keyOptions}).
+ */
+function qualifiedValueOptions(
+  engine: EngineContext,
+  ctx: CursorContext,
+  cm: CompletionContext,
+): Completion[] {
+  if (ctx.path[0] !== "Match_Datasets") return joinedOptions(engine, false);
+  const p = ctx.path;
+  const keysItem = ctx.kind === "key" && p.length === 4 && p[2] === "Keys" && p[3] === ITEM;
+  const keysValue = ctx.kind === "value" && p.length === 2 && ctx.key === "Keys";
+  return keysItem || keysValue ? keyOptions(engine, cm) : [];
+}
+
+/**
+ * The qualified keys a `Match_Datasets` entry's `Keys` may name (guide authoring/joins.md "A
+ * qualified key"): `<D>.<VAR>` of an entry BEFORE the current one — the source must be bound
+ * before this join runs — that is an ordinary inner join (a `left` source is refused; the
+ * server lists only ordinary keyed entries), never a wildcard.
+ */
+function keyOptions(engine: EngineContext, cm: CompletionContext): Completion[] {
+  const at = entryAt(cm.state.doc.toString(), cm.pos);
+  if (!at) return [];
+  const earlier = at.entries
+    .slice(0, at.index)
+    .map((e) => joinedNamed(engine.analysis, e.name))
+    .filter((j): j is JoinedDatasetT => !!j && !isLeftJoin(j));
+  return joinedOptions(engine, false, earlier).filter((o) => o.type !== "class");
+}
+
+/** The completion word: `[\w$&.-]*` keeps the dot, so a qualified name is one word. */
+interface Word {
+  from: number;
+  text: string;
+}
+
+/**
+ * The result for the word before the cursor. A word qualified by a joined dataset (`DM.`,
+ * `dm.RF` — the qualifier matched case-insensitively, the names ruling) narrows the list to that
+ * dataset's entries, and stays valid only while the qualifier is typed; the range is the whole
+ * qualified word, so taking `DM.RFSTDTC` replaces `DM.RF`.
+ */
+function wordResult(
+  engine: EngineContext,
+  word: Word,
+  options: Completion[],
+): CompletionResult | null {
+  const dot = word.text.indexOf(".");
+  const typed = dot > 0 ? word.text.slice(0, dot).toUpperCase() : "";
+  const joined = typed
+    ? joinedOf(engine.analysis).find((j) => j.name!.toUpperCase() === typed)
+    : undefined;
+  if (joined) {
+    const prefix = `${joined.name!.toUpperCase()}.`;
+    const narrowed = options.filter((o) => o.label.toUpperCase().startsWith(prefix));
+    const validFor = new RegExp(`^${escapeRegex(joined.name!)}\\.[\\w$&.-]*$`, "i");
+    return narrowed.length ? { from: word.from, options: narrowed, validFor } : null;
+  }
+  return options.length ? { from: word.from, options, validFor: /^[\w$&.-]*$/ } : null;
+}
+
+const escapeRegex = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+
+/**
+ * The qualified names of the datasets the rule joins via `Match_Datasets` (`only`: those of these
+ * entries), from the analysis' `joined` (absent from an older server or without a join: nothing;
+ * without a store the names come with no variables): `<Name>.<VAR>` for every variable listed for
+ * the dataset and, at a boolean position of an expression (`matched`), the flag `<Name>._matched_`
+ * of a `left` join — with an inner one it is constant-true and refused ({@link isLeftJoin}).
+ */
+export function joinedOptions(
+  engine: EngineContext,
+  matched: boolean,
+  only?: JoinedDatasetT[],
+): Completion[] {
+  const options: Completion[] = [];
+  for (const j of only ?? joinedOf(engine.analysis)) {
+    for (const v of j.variables ?? []) {
+      if (!v.name) continue;
+      options.push({
+        label: `${j.name}.${v.name}`,
+        type: v.classLevel ? "class" : "variable",
+        detail: [`joined ${j.name}`, v.type].filter(Boolean).join(" · "),
+        info: v.label || undefined,
+      });
+    }
+    if (matched && isLeftJoin(j)) {
+      options.push({
+        label: `${j.name}.${MATCHED}`,
+        type: "variable",
+        detail: "join matched — boolean",
+        info: `true on a row that found a partner in ${j.name}`,
+      });
+    }
+  }
+  return options;
 }
 
 /**

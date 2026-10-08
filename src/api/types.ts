@@ -39,6 +39,8 @@ export type AccessModeT = NonNullable<SessionInfoT["mode"]>;
 export type EngineInfoT = Schemas["EngineInfo"];
 export type AnalysedT = Schemas["Analysed"];
 export type AnalysisT = Schemas["Analysis"];
+/** A dataset joined via `Match_Datasets`, with the variables it brings (qualified `<name>.<VAR>`). */
+export type JoinedDatasetT = NonNullable<AnalysisT["joined"]>[number];
 export type DiagnosticT = Schemas["Diagnostic"];
 export type RangeT = Schemas["Range"];
 export type DerivedT = Schemas["Derived"];

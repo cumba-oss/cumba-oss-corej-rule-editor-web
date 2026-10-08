@@ -3,7 +3,13 @@ import type { Extension } from "@codemirror/state";
 import type { CodelistHitT, ScopeDatasetT } from "../../api/types";
 import { descriptionAt, ITEM } from "../../engine/schemaWalk";
 import { parseYaml } from "../../util/yaml";
-import { describeVariable, findVariable, type EngineContext } from "./engineContext";
+import {
+  describeVariable,
+  findJoined,
+  findVariable,
+  MATCHED,
+  type EngineContext,
+} from "./engineContext";
 import { displayType, renderMarkdownLine, renderSummary } from "./functionDocs";
 import { cursorContext } from "./yamlPath";
 
@@ -117,7 +123,9 @@ function codelistContent(id: string, lookup: CodelistHitT[]): TooltipContent | n
  * description (Scope keys add the resolved datasets); a function → signature + summary; a variable
  * → the catalogue entry, `--X` → its concrete variables; a Scope value → the resolved datasets;
  * `&NAME&` → its expansion or "expanded per dataset at run time"; a C-code → the CT codelist (loaded);
- * `Core.Id` → the related rules; `$binding` → its expression.
+ * `Core.Id` → the related rules; `$binding` → its expression; a qualified name of a dataset joined
+ * via `Match_Datasets` → the joined variable (`DM.RFSTDTC`), the match flag (`DM._matched_`) or
+ * "not a variable of DM" — never the primary's variable of that name.
  */
 export function tooltipAt(doc: string, pos: number, ctx: EngineContext): TooltipSpec | null {
   const lineStart = doc.lastIndexOf("\n", pos - 1) + 1;
@@ -215,6 +223,38 @@ export function tooltipAt(doc: string, pos: number, ctx: EngineContext): Tooltip
           : { title: text, lines: ["CT lookup unavailable"] };
       },
     };
+  }
+  const joined = findJoined(ctx.analysis, text);
+  if (joined?.kind === "matched") {
+    return spec({
+      title: `${joined.dataset}.${MATCHED}`,
+      lines: [
+        "boolean",
+        `true on a row that found a partner in ${joined.dataset}, false where the join found none`,
+        `joined via Match_Datasets ${joined.dataset}`,
+      ],
+    });
+  }
+  if (joined?.kind === "unknown") {
+    // the qualifier names a joined dataset: never fall through to the primary's variable
+    const store = ctx.analysis?.storeAvailable !== false;
+    return spec({
+      title: text,
+      lines: [
+        store
+          ? `not a variable of ${joined.dataset} in the rule's standards`
+          : `${joined.dataset}'s variables are unknown: no metadata store`,
+        `joined via Match_Datasets ${joined.dataset}`,
+      ],
+    });
+  }
+  if (joined) {
+    const jv = joined.variable;
+    const lines = [describeVariable(jv)];
+    if (jv.codelists?.length) lines.push(`codelists: ${jv.codelists.join(", ")}`);
+    lines.push(`joined via Match_Datasets ${joined.dataset}`);
+    if (jv.products?.length) lines.push(`versions: ${jv.products.join(", ")}`);
+    return spec({ title: `${joined.dataset}.${jv.name}`, lines });
   }
   const v = findVariable(ctx.analysis, text);
   if (!v) return null;

@@ -13,6 +13,7 @@ import type {
   ScenarioT,
   ScopeDatasetT,
   SuiteT,
+  JoinedDatasetT,
   VariableT,
 } from "../api/types";
 import { datasetText, setTestExpect, testLine } from "../engine/cdt";
@@ -179,6 +180,131 @@ const SCOPE_VARIABLES: VariableT[] = [
     concrete: ["AETERM", "CMTERM"],
   },
 ];
+
+/**
+ * The variables the store knows for the datasets a rule may join via `Match_Datasets` (the
+ * analysis' `joined`): DM from SDTMIG 3.3, ADSL from ADaMIG 1.3 — never a class-level `--X` (the
+ * server lists none). A joined name the table lacks is reported with no variables.
+ */
+const JOINED_VARIABLES: Record<string, VariableT[]> = {
+  DM: [
+    {
+      name: "USUBJID",
+      label: "Unique Subject Identifier",
+      type: "text",
+      core: "Req",
+      role: "Identifier",
+      codelists: [],
+      datasets: ["DM"],
+      products: ["standards/sdtmig/3-3"],
+      classLevel: false,
+      concrete: [],
+    },
+    {
+      name: "RFSTDTC",
+      label: "Subject Reference Start Date/Time",
+      type: "datetime",
+      core: "Exp",
+      role: "Record Qualifier",
+      codelists: [],
+      datasets: ["DM"],
+      products: ["standards/sdtmig/3-3"],
+      classLevel: false,
+      concrete: [],
+    },
+    {
+      name: "RFENDTC",
+      label: "Subject Reference End Date/Time",
+      type: "datetime",
+      core: "Exp",
+      role: "Record Qualifier",
+      codelists: [],
+      datasets: ["DM"],
+      products: ["standards/sdtmig/3-3"],
+      classLevel: false,
+      concrete: [],
+    },
+    {
+      name: "SEX",
+      label: "Sex",
+      type: "text",
+      core: "Req",
+      role: "Record Qualifier",
+      codelists: ["C66731"],
+      datasets: ["DM"],
+      products: ["standards/sdtmig/3-3"],
+      classLevel: false,
+      concrete: [],
+    },
+  ],
+  ADSL: [
+    {
+      name: "TRTSDT",
+      label: "Date of First Exposure to Treatment",
+      type: "integer",
+      core: "Cond",
+      role: "",
+      codelists: [],
+      datasets: ["ADSL"],
+      products: ["standards/adam/adamig-1-3"],
+      classLevel: false,
+      concrete: [],
+    },
+    {
+      name: "SAFFL",
+      label: "Safety Population Flag",
+      type: "text",
+      core: "Cond",
+      role: "",
+      codelists: ["C66742"],
+      datasets: ["ADSL"],
+      products: ["standards/adam/adamig-1-3"],
+      classLevel: false,
+      concrete: [],
+    },
+  ],
+};
+
+/**
+ * The buffer's `Match_Datasets` entries the server lists as joined (a naive line scan, block style):
+ * an ordinary keyed join — `Keys` given; not `Child: true`, not `RELREC`, no `--` template
+ * (`SUPP--`), no `&TOKEN&` — with its `Join_Type` lower case, `inner` when absent (the engine's
+ * default). A keyed concrete SUPP / SQ family (`SUPPAE`) IS listed, as the server lists it (with
+ * SUPPQUAL's variables there; none in this fake).
+ */
+function joinedEntries(lines: string[]): { name: string; joinType: string }[] {
+  const start = lines.findIndex((l) => /^Match_Datasets:/.test(l));
+  if (start < 0) return [];
+  const entries: { name: string; keys: boolean; child: boolean; joinType: string }[] = [];
+  let indent = -1;
+  for (const l of lines.slice(start + 1)) {
+    if (/^[^\s-]/.test(l)) break; // the next top-level key
+    const item = /^(\s*)-\s/.exec(l);
+    if (item && (indent < 0 || item[1].length === indent)) {
+      indent = item[1].length;
+      entries.push({ name: "", keys: false, child: false, joinType: "inner" });
+    }
+    const entry = entries[entries.length - 1];
+    if (!entry) continue;
+    const name = /^[\s-]*Name:\s*["']?([^"'\s]+)["']?/.exec(l);
+    if (name && !entry.name) entry.name = name[1];
+    if (/^[\s-]*Keys:/.test(l)) entry.keys = true;
+    if (/^[\s-]*Child:\s*true/.test(l)) entry.child = true;
+    const type = /^[\s-]*Join_Type:\s*["']?(\w+)/.exec(l);
+    if (type) entry.joinType = type[1].toLowerCase();
+  }
+  return entries
+    .filter(
+      (e) =>
+        e.name &&
+        e.keys &&
+        !e.child &&
+        e.name.toUpperCase() !== "RELREC" &&
+        !e.name.includes("--") &&
+        !e.name.includes("&"),
+    )
+    .map(({ name, joinType }) => ({ name, joinType }));
+}
 
 const RELATED: Record<string, RelatedRuleT[]> = {
   "CDISC-CG0270": [
@@ -359,6 +485,13 @@ export class FakeEngine {
       }
     }
     const bindings = [...content.matchAll(/name:\s*"(\$\w+)"/g)].map((m) => m[1]);
+    // the joined datasets' variables come from the store, like the scope universe's: without
+    // one the names come with no variables
+    const joined: JoinedDatasetT[] = joinedEntries(lines).map(({ name, joinType }) => ({
+      name,
+      joinType,
+      variables: this.info.storeAvailable ? (JOINED_VARIABLES[name.toUpperCase()] ?? []) : [],
+    }));
     return {
       coreId,
       loaded,
@@ -401,6 +534,7 @@ export class FakeEngine {
         { name: "USUBJID", where: "Outcome.Output_Variables", quoted: false },
       ],
       bindings,
+      ...(joined.length ? { joined } : {}),
       requiredVariables: ["USUBJID", "AESEQ", "--DTC"],
       storeAvailable: this.info.storeAvailable,
     };
