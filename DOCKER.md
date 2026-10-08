@@ -13,8 +13,9 @@ Both images are built **from the sources** (multi-stage Dockerfiles: Node runs t
 the rest build, inside the image build). After every `git pull`, `docker compose up --build` is the
 whole build — there is no `dist/` or `target/` to build beforehand, and none that can be stale.
 
-Status: first real container run 2026-10-06 — rootless Podman in WSL2, as the pod of step 5b;
-compose on the same host since 2026-10-08 (netavark switched to iptables, step 5b). Every trap
+Status: the same recipe ran for the internal twin — rootless Podman in WSL2, first as the pod of
+step 5b (2026-10-06), with compose since 2026-10-08 (netavark switched to iptables, step 5b); this
+twin's images have not been started yet. Every trap
 found is in the troubleshooting table.
 
 ## Prerequisites

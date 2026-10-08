@@ -103,8 +103,8 @@ reverse proxy in front of the two apps (what it forwards, on one origin; a 4 MB 
 cap; the SPA document's `Content-Security-Policy`, `X-Content-Type-Options: nosniff` and
 `frame-ancestors 'none'` — the CSP was measured in a headless browser: no violation, CodeMirror
 and Mantine styled); the compose file that
-pairs it with the rest container lives in `cumba-oss-corej-rule-editor-rest`. Both run for real on
-rootless Podman since 2026-10-08.
+pairs it with the rest container lives in `cumba-oss-corej-rule-editor-rest`. The same recipe runs
+for the internal twin on rootless Podman since 2026-10-08; these images have not been started yet.
 
 CI: `.github/workflows/ci.yml` (GitHub Actions: the npm chain through frontend-maven-plugin,
 one Maven pass, a signed release asset on a tag) and `.gitea/workflows/main.yml` (the same gate
