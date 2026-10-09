@@ -2,15 +2,17 @@
  * Where the cursor is inside a rule-language expression, by a lexer-level scan of the expression
  * text up to the cursor — what the completion offers there (owner 2026-10-08):
  *
- * - an **operand** position (the start, after an operator, after `(` `[` `,` or a keyword
- *   argument's `=`): variables, bindings, functions — and, directly at an argument of a call, that
- *   function's parameters as named arguments;
+ * - an **operand** position (the start, after an operator, after `(` `[` `,`, a keyword
+ *   argument's `=` or a sided member's `left:` / `right:`): variables, bindings, functions — and,
+ *   directly at an argument of a call, that function's parameters as named arguments;
  * - an **operator** position (after a complete operand): only the operators valid there.
  *
  * The scan mirrors the engine's lexer (`cumba-corej-core` `core/expr/ExpressionLexer.java`) and
  * parser (`CheckExpressionParser.java`): `"…"` strings with backslash escapes, `` `…` `` quoted
  * references, `/…/` regexes in operand position, identifiers with `- . * $` inside and `&NAME&`
- * tokens, the contextual arithmetic `+ - * /` (an operator only after an operand). A `'…'` string
+ * tokens, the keywords in any case (`AND` is `and`), the contextual arithmetic `+ - * /` (an
+ * operator only after an operand), the `~` substitution with its `/pattern/replacement/` literal,
+ * and the sided group member `{left: X, right: Y}` as a frame of its own. A `'…'` string
  * is not in the language, but is skipped as one so that its content never reads as code. Anything
  * the scan cannot place — an unterminated string, a stray character, an unbalanced bracket — is
  * `unknown`, and the completion then falls back to the operand list rather than hide things.
@@ -54,6 +56,11 @@ export type ExpressionPosition =
 export const COMPARISON_OPERATORS = ["==", "!=", "<", "<=", ">", ">=", "=~", "!~"] as const;
 export const MEMBERSHIP_OPERATORS = ["in", "not in"] as const;
 export const ARITHMETIC_OPERATORS = ["+", "-", "*", "/"] as const;
+/**
+ * `X ~ /pattern/replacement/` (`CheckExpressionParser.parsePostfix`): a postfix on an operand,
+ * binding tighter than `* /` — offered wherever arithmetic is (the lexer's `afterOperand`).
+ */
+export const SUBSTITUTION_OPERATORS = ["~"] as const;
 export const LOGICAL_OPERATORS = ["and", "or"] as const;
 
 /** What an operator does, for the completion's detail column. */
@@ -72,6 +79,7 @@ export const OPERATOR_DETAIL: Record<string, string> = {
   "-": "subtract",
   "*": "multiply",
   "/": "divide",
+  "~": "replace the first match: ~ /pattern/replacement/",
   and: "all operands true",
   or: "at least one true",
 };
@@ -79,14 +87,18 @@ export const OPERATOR_DETAIL: Record<string, string> = {
 type Kind =
   | "operand" // a number, string or quoted reference: arithmetic may follow
   | "literal" // a regex, `true`, `false`: an operand the lexer reads no arithmetic after
+  | "subst" // `~`: only its /pattern/replacement/ literal may follow (an "operand" then)
   | "ident" // an identifier (also an operand) — a call when `(` follows
   | "flag" // a join-match flag `<D>._matched_`: a boolean condition, only and / or may follow
   | "lparen"
   | "rparen"
   | "lbracket"
   | "rbracket"
+  | "lbrace"
+  | "rbrace" // ends the sided member; the lexer reads no arithmetic after it
   | "comma"
   | "eq" // a single `=`: a keyword argument's separator
+  | "colon" // a sided member's key separator
   | "compare" // == != < <= > >= =~ !~
   | "arith"
   | "and"
@@ -95,7 +107,8 @@ type Kind =
   | "in";
 
 interface Frame {
-  kind: "group" | "call" | "list";
+  /** `sided`: the group member `{left: X, right: Y}` (`CheckExpressionParser.parseSided`). */
+  kind: "group" | "call" | "list" | "sided";
   name?: string;
   /**
    * The frame holds a whole expression (`parseOr`: the top level, a `( … )` group, the argument
@@ -107,7 +120,7 @@ interface Frame {
   named: string[];
   /** Tokens of the frame's current argument / element / group so far. */
   tokens: number;
-  /** The keyword name of the current argument (`name=` seen). */
+  /** The keyword name of the current argument (`name=` seen) — or the sided key (`left:`). */
   argName?: string;
   /** A comparison / membership operator already in the current comparison (they do not chain). */
   compared: boolean;
@@ -118,14 +131,21 @@ interface Frame {
 /** The one call whose argument is a whole condition (`CheckExpressionParser.parseCall`). */
 export const JOINED = "joined";
 
-const KEYWORDS: Record<string, Kind> = {
-  and: "and",
-  or: "or",
-  not: "not",
-  in: "in",
-  true: "literal",
-  false: "literal",
-};
+/** Looked up lower-cased, as `ExpressionLexer` does (`text.toLowerCase(Locale.ROOT)`, O21). */
+const KEYWORDS = new Map<string, Kind>([
+  ["and", "and"],
+  ["or", "or"],
+  ["not", "not"],
+  ["in", "in"],
+  ["true", "literal"],
+  ["false", "literal"],
+]);
+
+/** The closing bracket of each frame kind. */
+const CLOSER: Record<Frame["kind"], string> = { group: ")", call: ")", list: "]", sided: "}" };
+
+/** A sided member's two keys, exactly as `parseSided` compares them. */
+const SIDES = new Set(["left", "right"]);
 
 const endsOperand = (k: Kind | undefined) =>
   k === "operand" ||
@@ -133,12 +153,13 @@ const endsOperand = (k: Kind | undefined) =>
   k === "ident" ||
   k === "flag" ||
   k === "rparen" ||
-  k === "rbracket";
+  k === "rbracket" ||
+  k === "rbrace";
 
 /**
  * `ExpressionLexer.afterOperand`: `+ - * /` are arithmetic only after these (not a regex /
- * boolean). A flag lexes as the identifier it is; that arithmetic on it is refused is the
- * checker's business, and the operator list's.
+ * boolean / `}`; a substitution literal is an "operand"). A flag lexes as the identifier it is;
+ * that arithmetic on it is refused is the checker's business, and the operator list's.
  */
 const takesArithmetic = (k: Kind | undefined) =>
   k === "operand" || k === "ident" || k === "flag" || k === "rparen" || k === "rbracket";
@@ -153,7 +174,11 @@ function expansionEnd(text: string, at: number): number {
   return m ? at + m[0].length : -1;
 }
 
-/** The end of a delimited literal starting at `at` (exclusive), or -1 when unterminated. */
+/**
+ * The end of a delimited literal starting at `at` (exclusive), or -1 when unterminated. A backslash
+ * takes the next character with it — `\/` the delimiter, `\\` a backslash (the regex literal's
+ * `scanSlashDelimited`).
+ */
 function delimitedEnd(text: string, at: number, close: string): number {
   for (let i = at + 1; i < text.length; i++) {
     if (text[i] === "\\") i++;
@@ -246,7 +271,16 @@ export function classifyExpression(text: string): ExpressionPosition {
       continue;
     }
     const two = text.slice(i, i + 2);
-    if (c === '"' || c === "'" || c === "`") {
+    if (prev === "subst") {
+      // ExpressionLexer: directly after `~` a `/` opens the /pattern/replacement/ literal, and
+      // parsePostfix takes nothing else there
+      if (c !== "/") return unknown;
+      const patternEnd = delimitedEnd(text, i, "/");
+      const end = patternEnd < 0 ? -1 : delimitedEnd(text, patternEnd - 1, "/");
+      if (end < 0) return unknown; // the cursor is inside the literal
+      emit("operand");
+      i = end;
+    } else if (c === '"' || c === "'" || c === "`") {
       const end = delimitedEnd(text, i, c);
       if (end < 0) return unknown; // the cursor is inside a string / quoted reference
       emit("operand");
@@ -286,10 +320,31 @@ export function classifyExpression(text: string): ExpressionPosition {
         boolean: false,
       });
       i++;
-    } else if (c === ")" || c === "]") {
+    } else if (c === "{") {
+      emit("lbrace");
+      stack.push({
+        kind: "sided",
+        full: false,
+        positionals: 0,
+        named: [],
+        tokens: 0,
+        compared: false,
+        boolean: false,
+      });
+      i++;
+    } else if (c === ")" || c === "]" || c === "}") {
       const frame = stack.pop();
-      if (!frame || stack.length === 0 || (frame.kind === "list") !== (c === "]")) return unknown;
-      emit(c === ")" ? "rparen" : "rbracket");
+      if (!frame || stack.length === 0 || CLOSER[frame.kind] !== c) return unknown;
+      emit(c === ")" ? "rparen" : c === "]" ? "rbracket" : "rbrace");
+      i++;
+    } else if (c === ":") {
+      const frame = top();
+      // a sided key: `left` / `right` opening a member of `{…}`; a `:` anywhere else is no grammar
+      if (frame.kind !== "sided" || prev !== "ident" || frame.tokens !== 1) return unknown;
+      if (!SIDES.has(prevText)) return unknown;
+      frame.argName = prevText;
+      beforePrev = prev;
+      prev = "colon";
       i++;
     } else if (c === ",") {
       const frame = top();
@@ -306,6 +361,9 @@ export function classifyExpression(text: string): ExpressionPosition {
     } else if (two === "==" || two === "!=" || two === "=~" || two === "!~") {
       emit("compare", two);
       i += 2;
+    } else if (c === "~") {
+      emit("subst", c);
+      i++;
     } else if (c === "=") {
       const frame = top();
       // a keyword argument: `name=` opening an argument of a call (never of joined, which takes
@@ -340,7 +398,8 @@ export function classifyExpression(text: string): ExpressionPosition {
       const end = identEnd(text, i);
       if (end < 0 || end === i) return unknown;
       const word = text.slice(i, end);
-      emit(KEYWORDS[word] ?? (MATCHED_FLAG.test(word) ? "flag" : "ident"), word);
+      const keyword = KEYWORDS.get(word.toLowerCase());
+      emit(keyword ?? (MATCHED_FLAG.test(word) ? "flag" : "ident"), word);
       i = end;
     } else {
       return unknown;
@@ -349,14 +408,21 @@ export function classifyExpression(text: string): ExpressionPosition {
 
   if (strayEq) return unknown;
   const frame = top();
+  // right after `~`: only the /pattern/replacement/ literal parses — nothing to offer
+  if (prev === "subst") return { kind: "operator", operators: [] };
+  // a sided member before its `:` — at the key, or between key and `:` — offers no operand
+  if (frame.kind === "sided" && frame.argName === undefined) return unknown;
   if (prev === "flag") {
     // a boolean condition (D88b): no comparison, membership or arithmetic on it — and outside a
     // whole condition's frame it is misused anyway
     return { kind: "operator", operators: frame.full ? [...LOGICAL_OPERATORS] : [] };
   }
   if (endsOperand(prev)) {
-    const arithmetic = takesArithmetic(prev) ? [...ARITHMETIC_OPERATORS] : [];
-    // a list element, a call argument (but joined's), a keyword value: one arithmetic operand
+    const arithmetic = takesArithmetic(prev)
+      ? [...ARITHMETIC_OPERATORS, ...SUBSTITUTION_OPERATORS]
+      : [];
+    // a list element, a call argument (but joined's), a keyword value, a sided member's side: one
+    // arithmetic operand
     if (!frame.full) return { kind: "operator", operators: arithmetic };
     const operators: string[] = [];
     if (!frame.compared) operators.push(...COMPARISON_OPERATORS, ...MEMBERSHIP_OPERATORS);

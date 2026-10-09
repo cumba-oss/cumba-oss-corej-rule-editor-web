@@ -18,11 +18,11 @@ import { tooltipAt } from "./ruleTooltips";
 const WITHIN: FunctionInfoT = {
   name: "empty_within_except_last_row",
   kind: "BOOLEAN",
-  signature: "empty_within_except_last_row(name, group, ordering=, keep_missings=)",
+  signature: "empty_within_except_last_row(name, group, by=, keep_missings=)",
   parameters: [
     { name: "name", type: "COLUMN_REFERENCE", required: true, collector: false },
     { name: "group", type: "UNKNOWN", required: true, collector: false },
-    { name: "ordering", type: "STRING", required: false, collector: false },
+    { name: "by", type: "STRING", required: false, collector: false },
     { name: "keep_missings", type: "BOOLEAN", required: false, collector: false },
   ],
   sections: {},
@@ -241,7 +241,7 @@ describe("joined-dataset completion in an expression", () => {
     expect(ops).toContain("<");
     expect(ops.filter((l) => l.startsWith("DM."))).toEqual([]);
     expect(labels(RULE("    DM.RFSTDTC |"))).toContain("<");
-    const named = labels(RULE("    empty_within_except_last_row(AETERM, ordering=1, |)"));
+    const named = labels(RULE("    empty_within_except_last_row(AETERM, by=1, |)"));
     expect(named).toEqual(["group=", "keep_missings="]);
   });
 

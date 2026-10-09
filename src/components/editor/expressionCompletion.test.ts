@@ -12,11 +12,11 @@ import { applyFunction, namedArgumentOptions, ruleCompletionSource } from "./rul
 const WITHIN: FunctionInfoT = {
   name: "empty_within_except_last_row",
   kind: "BOOLEAN",
-  signature: "empty_within_except_last_row(name, group, ordering=, keep_missings=)",
+  signature: "empty_within_except_last_row(name, group, by=, keep_missings=)",
   parameters: [
     { name: "name", type: "COLUMN_REFERENCE", required: true, collector: false },
     { name: "group", type: "UNKNOWN", required: true, collector: false, description: "the `keys`" },
-    { name: "ordering", type: "STRING", required: false, collector: false },
+    { name: "by", type: "STRING", required: false, collector: false },
     { name: "keep_missings", type: "BOOLEAN", required: false, collector: false },
   ],
   sections: {},
@@ -85,14 +85,74 @@ describe("expression completion by position", () => {
       "-",
       "*",
       "/",
+      "~",
       "and",
       "or",
     ]);
-    expect(labels("    AETERM == $t a|")).toEqual(["+", "-", "*", "/", "and", "or"]);
+    expect(labels("    AETERM == $t a|")).toEqual(["+", "-", "*", "/", "~", "and", "or"]);
     expect(labels("    AETERM not |")).toEqual(["in"]);
     // a call argument is one arithmetic operand (parseArg → parseOperand)
-    expect(labels("    empty(AETERM |")).toEqual(["+", "-", "*", "/"]);
-    expect(labels("    none(joined(AETERM == $t |")).toEqual(["+", "-", "*", "/", "and", "or"]);
+    expect(labels("    empty(AETERM |")).toEqual(["+", "-", "*", "/", "~"]);
+    expect(labels("    none(joined(AETERM == $t |")).toEqual([
+      "+",
+      "-",
+      "*",
+      "/",
+      "~",
+      "and",
+      "or",
+    ]);
+  });
+
+  it("reads upper-case keywords as the keywords (O21): operands after AND, in after NOT", () => {
+    for (const expression of [
+      "    A == 1 AND |",
+      "    A == 1 Or |",
+      "    NOT |",
+      "    X NOT IN |",
+    ]) {
+      const got = labels(expression);
+      expect(got, expression).toContain("empty");
+      expect(got, expression).toContain("$t");
+      expect(got, expression).not.toContain("==");
+    }
+    expect(labels("    AETERM NOT |")).toEqual(["in"]);
+    expect(labels("    TRUE |")).not.toContain("+");
+  });
+
+  it("offers ~ with its detail, and keeps the context after a /pattern/replacement/", () => {
+    const tilde = complete("    AETERM |")!.options.find((o) => o.label === "~")!;
+    expect(tilde.detail).toMatch(/replace/);
+    expect(tilde.apply).toBe("~ ");
+    // after the literal: an operand again — the same operators as after AETERM
+    expect(labels("    AETERM ~ /a/b/ |")).toEqual(labels("    AETERM |"));
+    expect(labels("    empty(AETERM ~ /a\\/b/c/ |")).toEqual(["+", "-", "*", "/", "~"]);
+    expect(labels("    X ~ /a/b/ == $t and |")).toContain("empty");
+    // right after ~ only the literal parses: no operand list
+    expect(complete("    AETERM ~ |")?.options ?? []).toEqual([]);
+  });
+
+  it("offers columns inside a sided group member {left: X, right: Y}", () => {
+    for (const expression of [
+      '    sequence(ETCD, domain="TA", group=[{left: |',
+      '    sequence(ETCD, domain="TA", group=[{left: ACTARMCD, right: |',
+    ]) {
+      const got = labels(expression);
+      expect(got, expression).toContain("AETERM");
+      expect(got, expression).not.toContain("==");
+      expect(
+        got.filter((l) => l.endsWith("=")),
+        expression,
+      ).toEqual([]); // no named arguments
+    }
+    // after the member the call's argument context is back: named arguments of the call
+    const at = (e: string) => complete(e)!.options.filter((o) => o.type === "property");
+    expect(
+      at("    empty_within_except_last_row(AETERM, group=[{left: A, right: B}], |").map(
+        (o) => o.label,
+      ),
+    ).toEqual(["by=", "keep_missings="]);
+    expect(labels("    f(group=[{left: A |")).toEqual(["+", "-", "*", "/", "~"]);
   });
 
   it("applies an operator with the spaces it needs", () => {
@@ -122,17 +182,16 @@ describe("expression completion by position", () => {
     expect(at("    empty_within_except_last_row(|").map((o) => o.label)).toEqual([
       "name=",
       "group=",
-      "ordering=",
+      "by=",
       "keep_missings=",
     ]);
     // positionally bound and already named ones are left out
-    expect(
-      at("    empty_within_except_last_row(AETERM, ordering=AESEQ, |").map((o) => o.label),
-    ).toEqual(["group=", "keep_missings="]);
+    expect(at("    empty_within_except_last_row(AETERM, by=AESEQ, |").map((o) => o.label)).toEqual([
+      "group=",
+      "keep_missings=",
+    ]);
     // the typed prefix is part of the completion word
-    expect(at("    empty_within_except_last_row(AETERM, ord|").map((o) => o.label)).toContain(
-      "ordering=",
-    );
+    expect(at("    empty_within_except_last_row(AETERM, b|").map((o) => o.label)).toContain("by=");
     const group = at("    empty_within_except_last_row(|").find((o) => o.label === "group=")!;
     expect(group).toMatchObject({ apply: "group=", detail: "any · required", boost: 3 });
     expect(group.boost!).toBeGreaterThan(2); // above bindings (2) and variables (0 / 1)
@@ -161,7 +220,7 @@ describe("expression completion by position", () => {
         positionals: 0,
         named: ["GROUP"],
       }).map((o) => o.label),
-    ).toEqual(["name=", "group=", "ordering=", "keep_missings="]);
+    ).toEqual(["name=", "group=", "by=", "keep_missings="]);
     expect(namedArgumentOptions([WITHIN], { name: "nope", positionals: 0, named: [] })).toEqual([]);
   });
 
@@ -178,17 +237,17 @@ describe("expression completion by position", () => {
 
   it("offers only named arguments after a keyword argument", () => {
     // "Positional argument after keyword argument" (CheckExpressionParser.parseArg)
-    expect(labels("    empty_within_except_last_row(AETERM, ordering=AESEQ, |")).toEqual([
+    expect(labels("    empty_within_except_last_row(AETERM, by=AESEQ, |")).toEqual([
       "group=",
       "keep_missings=",
     ]);
-    expect(labels("    empty_within_except_last_row(AETERM, ordering=AESEQ, ke|")).toEqual([
+    expect(labels("    empty_within_except_last_row(AETERM, by=AESEQ, ke|")).toEqual([
       "group=",
       "keep_missings=",
     ]);
     // all of them given: nothing parses there
     expect(
-      complete("    empty_within_except_last_row(name=A, group=B, ordering=C, keep_missings=D, |"),
+      complete("    empty_within_except_last_row(name=A, group=B, by=C, keep_missings=D, |"),
     ).toBeNull();
     // before any keyword argument, positionals stay on offer
     expect(labels("    empty_within_except_last_row(AETERM, |")).toContain("empty");
