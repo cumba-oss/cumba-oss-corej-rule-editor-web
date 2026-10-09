@@ -13,3 +13,7 @@ target/
 .claude/
 *.iml
 .flattened-pom.xml
+
+# The release zip CI downloads for Dockerfile.runtime (publish-image job). The image takes the
+# unpacked copy from image-ctx/, so the zip itself must never enter the build context.
+release-archives/

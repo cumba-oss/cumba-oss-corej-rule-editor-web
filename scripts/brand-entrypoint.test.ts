@@ -34,13 +34,15 @@ describe("docker/25-cumba-brand.sh", () => {
   it("is committed executable (the entrypoint ignores a non-executable script)", () => {
     // the file-system mode means nothing on Windows; the git index mode is checked everywhere
     if (!WINDOWS) expect(fs.statSync(SCRIPT).mode & 0o111).toBe(0o111);
+    // cwd = the repo root, so the pathspec names the file (from docker/ it read docker/docker/…
+    // and matched nothing). An EMPTY listing fails: a guard that matches nothing went vacuous.
     const tracked = spawnSync("git", ["ls-files", "-s", "docker/25-cumba-brand.sh"], {
-      cwd: path.dirname(SCRIPT),
+      cwd: path.resolve(__dirname, ".."),
       encoding: "utf8",
     });
-    if (tracked.status === 0 && tracked.stdout.trim() !== "") {
-      expect(tracked.stdout.startsWith("100755 ")).toBe(true);
-    }
+    expect(tracked.status).toBe(0);
+    expect(tracked.stdout.trim()).not.toBe("");
+    expect(tracked.stdout.startsWith("100755 ")).toBe(true);
   });
 
   it.skipIf(!HAS_SH)("accepts a known brand and defaults to neutral", () => {

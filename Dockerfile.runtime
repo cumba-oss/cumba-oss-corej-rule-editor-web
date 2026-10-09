@@ -1,5 +1,3 @@
-# syntax=docker/dockerfile:1
-#
 # CI runtime image for the rule editor SPA (PLAN-ci-snapshots-and-container-images D5): nginx +
 # docker/nginx.conf + docker/25-cumba-brand.sh + the built dist. No Node: the SPA was built
 # once by the workflow's build job, and the image carries the same bytes as the release zip.
