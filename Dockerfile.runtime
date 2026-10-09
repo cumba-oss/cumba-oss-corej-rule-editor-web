@@ -1,0 +1,35 @@
+# syntax=docker/dockerfile:1
+#
+# CI runtime image for the rule editor SPA (PLAN-ci-snapshots-and-container-images D5): nginx +
+# docker/nginx.conf + docker/25-cumba-brand.sh + the built dist. No Node: the SPA was built
+# once by the workflow's build job, and the image carries the same bytes as the release zip.
+#
+# Context is THIS REPOSITORY. The build job uploads target/cumba-oss-corej-rule-editor-web-<version>.zip
+# (the release zip, on every push; its root IS the dist); the publish-image job of
+# .github/workflows/ci.yml unzips it into image-ctx/corej-rule-editor-web/. ⚠ Never the
+# repo-root dist/: .dockerignore excludes it (a stale dist/ must never reach the from-source
+# image), image-ctx/ deliberately is not excluded. By hand, from a built tree:
+#
+#   mkdir -p image-ctx && rm -rf image-ctx/corej-rule-editor-web
+#   cp -a dist image-ctx/corej-rule-editor-web
+#   docker build -f Dockerfile.runtime -t corej-rule-editor-web:local .
+#
+# Published as docker.io/p300/corej-rule-editor-web (README § Container image). The base
+# image is the build arg NGINX_IMAGE; CI keeps the default, Docker Hub's nginx:1.27-alpine.
+# Everything below the FROM is the self-building Dockerfile's runtime stage — keep the two in
+# step; the comments that explain it live there (and in DOCKER.md).
+ARG NGINX_IMAGE=nginx:1.27-alpine
+FROM ${NGINX_IMAGE}
+
+ARG API_UPSTREAM=rule-editor-rest:8081
+COPY docker/nginx.conf /etc/nginx/templates/default.conf.template
+# The official image renders /etc/nginx/templates/*.template with envsubst at start-up,
+# substituting only the variables named in NGINX_ENVSUBST_FILTER (nginx's own $vars survive).
+ENV API_UPSTREAM=${API_UPSTREAM} \
+    BRAND=neutral \
+    NGINX_ENVSUBST_FILTER="API_UPSTREAM|BRAND"
+# ⚠ --chmod=0755 is load-bearing: the entrypoint IGNORES a non-executable script, and an
+# unchecked unknown BRAND would then 404 /brand/brand.css with no error.
+COPY --chmod=0755 docker/25-cumba-brand.sh /docker-entrypoint.d/25-cumba-brand.sh
+COPY image-ctx/corej-rule-editor-web/ /usr/share/nginx/html/
+EXPOSE 80

@@ -3,7 +3,7 @@
 # official image runs /docker-entrypoint.d/*.sh before nginx, and a non-zero exit stops the
 # container — a typo must not silently serve the default look. Checks the name rule before the
 # name touches a path, then that brands/<name>/brand.css exists under the html root. Lists the
-# available brands on refusal. CUMBA_HTML_ROOT is for the test (docker/brand-entrypoint.test.ts).
+# available brands on refusal. CUMBA_HTML_ROOT is for the test (scripts/brand-entrypoint.test.ts).
 #
 # ⚠ The entrypoint IGNORES a script that is not executable: the Dockerfile copies this file with
 # --chmod=0755, and it is committed with mode 755.

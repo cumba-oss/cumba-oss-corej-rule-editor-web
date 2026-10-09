@@ -107,7 +107,24 @@ pairs it with the rest container lives in `cumba-oss-corej-rule-editor-rest`. Th
 for the internal twin on rootless Podman since 2026-10-08; these images have not been started yet.
 
 CI: `.github/workflows/ci.yml` (GitHub Actions: the npm chain through frontend-maven-plugin,
-one Maven pass, a signed release asset on a tag) and `.gitea/workflows/main.yml` (the same gate
+one Maven pass, the release zip on every push, the `publish-image` job, a signed release asset
+on a tag) and `.gitea/workflows/main.yml` (the same gate
 on the internal Gitea) are copies of `cumba-oss-corej-web`'s — kept in step with those files,
 never with the Java workflows; the two deliberately differ from each other (the header of
 `ci.yml` lists the five inversions).
+
+## Container image
+
+CI publishes **`docker.io/p300/corej-rule-editor-web`** to Docker Hub, for linux/amd64 and linux/arm64. The
+`publish-image` job of `.github/workflows/ci.yml` builds [`Dockerfile.runtime`](Dockerfile.runtime)
+from the release zip the build job produced — the zip's dist under nginx, with `docker/nginx.conf`
+and `docker/25-cumba-brand.sh` — so the image carries the release's bytes and no Maven or npm runs
+inside the image build.
+
+| pushed by      | tags                                                                                             |
+| -------------- | ------------------------------------------------------------------------------------------------ |
+| a tag `vX.Y.Z` | `X.Y.Z` and `latest` — `latest` only ever means a release                                        |
+| a push to main | `X.Y.Z-SNAPSHOT`, the pom's `<revision>` (moves with main), and `sha-<short commit>` (immutable) |
+
+The self-building [`Dockerfile`](Dockerfile) and the rest repo's `docker-compose.yml` stay for local
+builds from the sources ([`DOCKER.md`](DOCKER.md)); the two runtime stages are kept in step.
