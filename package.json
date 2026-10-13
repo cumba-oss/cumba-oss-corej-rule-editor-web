@@ -50,7 +50,7 @@
     "eslint-plugin-react-hooks": "^7",
     "globals": "^17",
     "jsdom": "^30",
-    "msw": "^3",
+    "msw": "^2",
     "openapi-typescript": "^7",
     "prettier": "^3",
     "typescript": "^6",
