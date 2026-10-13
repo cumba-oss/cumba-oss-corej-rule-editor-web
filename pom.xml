@@ -95,7 +95,7 @@
                 <groupId>com.github.eirslett</groupId>
                 <artifactId>frontend-maven-plugin</artifactId>
                 <configuration>
-                    <nodeVersion>v24.20.0</nodeVersion>
+                    <nodeVersion>v24.21.0</nodeVersion>
                     <installDirectory>target</installDirectory>
                 </configuration>
                 <executions>
