@@ -30,7 +30,7 @@ jobs:
     # the internal twin and this repo's .github lane both use; the whole gate is ~30 s.
     timeout-minutes: 30
     container:
-      image: ${{ vars.DOCKER_REGISTRY_HOSTNAME }}/maven-with-nodejs:3.9-eclipse-temurin-25
+      image: ${{ vars.DOCKER_REGISTRY_HOSTNAME }}/maven-with-nodejs:3.10-eclipse-temurin-25
     defaults:
       run:
         shell: bash
@@ -194,7 +194,7 @@ jobs:
       # The JS actions below (download-artifact, gitea-release-action) need a node
       # runtime; the bare runner host has none. Reuse the node-bearing build image —
       # heavier than needed, but already pullable, no new dependency.
-      image: ${{ vars.DOCKER_REGISTRY_HOSTNAME }}/maven-with-nodejs:3.9-eclipse-temurin-25
+      image: ${{ vars.DOCKER_REGISTRY_HOSTNAME }}/maven-with-nodejs:3.10-eclipse-temurin-25
     # ⛔ bash, EXPLICITLY. Gitea's act_runner defaults a job's steps to `sh -e`, which is
     # dash — it has no `pipefail` and no `shopt`, both of which the signing steps below
     # use. GitHub defaults to bash, so this divergence is invisible in the .github file
