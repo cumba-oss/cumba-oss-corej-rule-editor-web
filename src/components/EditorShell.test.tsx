@@ -365,8 +365,12 @@ describe("EditorShell — branches and leaving", () => {
     expect(fake.files.get(RULE)!.content).toBe(original);
     expect(fake.files.has(NEW)).toBe(false);
     await waitFor(() => expect(bufferText(container)).toBe(original));
+    // each discarded file is re-read in turn: the new file's tab closes on its own 404, which
+    // can land a render after the modified file's buffer reloads, so wait for it as well
+    await waitFor(() =>
+      expect(screen.queryByRole("tab", { name: "CDISC-ZZ0001.yaml" })).not.toBeInTheDocument(),
+    );
     expect(screen.getByRole("tab", { name: "CDISC-CG0270.yaml" })).toBeInTheDocument();
-    expect(screen.queryByRole("tab", { name: "CDISC-ZZ0001.yaml" })).not.toBeInTheDocument();
     expect(fake.branch).toBe("feature/x");
 
     // with the tree clean the switch goes through
