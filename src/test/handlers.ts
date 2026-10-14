@@ -555,7 +555,7 @@ export class FakeWorkspace {
 /** The one fake every test shares; `setup.ts` resets it before each test. */
 export const fake = new FakeWorkspace();
 
-/** The brand's optional logo file: none by default (`setup.ts` runs MSW with onUnhandledRequest: "error"). */
+/** The brand's optional logo file: none by default (`setup.ts` runs MSW with onUnhandledFrame: "error"). */
 export const brandHandlers: HttpHandler[] = [
   http.get("/brand/brand.json", () => HttpResponse.json({})),
 ];
