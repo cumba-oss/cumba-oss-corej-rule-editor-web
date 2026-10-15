@@ -132,6 +132,21 @@ change the subnet and `EDITOR_TRUSTED_PROXIES` together. A client inside a trust
 told from a proxy, so never trust a wider range; the TLS proxy on the host must append the real
 client to `X-Forwarded-For`.
 
+⚠ **Behind the TLS proxy** the browser's `Origin` is `https://…` while nginx talks plain HTTP to
+the rest app; its CORS check compares the two. nginx therefore forwards the TLS proxy's
+`X-Forwarded-Proto` (its own `$scheme` when there is none), `X-Forwarded-Host` and
+`X-Forwarded-Port` (`docker/nginx.conf`), and the rest app believes them only from a peer in
+`EDITOR_TRUSTED_PROXIES` — nginx, inside the default subnet. Whatever reaches nginx is believed,
+so the TLS proxy must:
+
+- **overwrite** `X-Forwarded-Proto` with its own scheme (`https`);
+- keep `Host` as the browser sent it, port included (or set `X-Forwarded-Host`);
+- **drop** a client's `X-Forwarded-Host` / `X-Forwarded-Port`.
+
+Caddy's `reverse_proxy` does the first two by itself; an nginx in front needs
+`proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header Host $http_host;`.
+Without the scheme, every login and save answers `403 Invalid CORS request` (troubleshooting).
+
 ### The brand
 
 `BRAND=<name>` in the environment of `rule-editor-web` selects the look (`neutral` by default,
@@ -290,6 +305,7 @@ holds none:
 | `"nft" did not return successfully while applying ruleset` (podman)       | netavark cannot program nftables on this kernel (WSL2) — run the pod of step 5b, or switch netavark to iptables                                           |
 | `curl: Recv failure: Connection reset by peer` on `localhost:8080`        | IPv6 (`::1`) through the rootless port forwarding — use `127.0.0.1` (step 5c)                                                                             |
 | `Login refused` / `Request failed (403)`, body `Invalid CORS request`     | the proxy forwarded `Host` without the port: an nginx image older than `proxy_set_header Host $http_host` — rebuild it; any own proxy must keep the port  |
+| the same, only behind the TLS proxy                                       | the TLS proxy sends no `X-Forwarded-Proto: https`, nginx predates forwarding it (rebuild), or nginx is outside `EDITOR_TRUSTED_PROXIES` (step 4)          |
 | `rule-editor-web` logs a Spring banner and `Port 8081 was already in use` | the web image was built from the rest directory (`podman build -t rule-editor-web .` in the wrong place) — build it from the web repo                     |
 | `FORGE_REFUSED` although the token clones fine                            | the token lacks `read:user` (Gitea) — the login probes `GET /user` first (step 6)                                                                         |
 
