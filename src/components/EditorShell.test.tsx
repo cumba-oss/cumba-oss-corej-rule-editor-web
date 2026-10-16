@@ -325,8 +325,9 @@ describe("EditorShell — branches and leaving", () => {
     await waitFor(() => expect(fake.branch).toBe("feature/other"));
     await waitFor(() => expect(fileTabs()).toHaveLength(0));
     expect(fake.unpushedCommits.map((c) => c.message)).toEqual(["WIP on x"]);
-    expect(await screen.findByRole("button", { name: "branch" })).toHaveTextContent(
-      "feature/other",
+    // the button already shows the old branch; the label follows only once /api/status answers
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "branch" })).toHaveTextContent("feature/other"),
     );
   });
 
@@ -467,8 +468,9 @@ describe("EditorShell — branches and leaving", () => {
     await user.type(screen.getByLabelText("New branch from main"), "feature/fresh");
     await user.click(screen.getByRole("button", { name: "Create" }));
     await waitFor(() => expect(fake.branch).toBe("feature/fresh"));
-    expect(await screen.findByRole("button", { name: "branch" })).toHaveTextContent(
-      "feature/fresh",
+    // the button already shows the old branch; the label follows only once /api/status answers
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "branch" })).toHaveTextContent("feature/fresh"),
     );
   });
 

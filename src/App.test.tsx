@@ -15,7 +15,11 @@ describe("App", () => {
     await user.type(screen.getByLabelText("Login name"), "alice");
     await user.type(screen.getByLabelText("Personal access token"), "tok");
     await user.click(screen.getByRole("button", { name: "Log in" }));
-    expect(await screen.findByRole("button", { name: "branch" })).toHaveTextContent("feature/x");
+    // The header mounts with "… ▾" before /api/status answers: findBy* would resolve on the
+    // button itself, so wait for the label, not merely the element.
+    await waitFor(() =>
+      expect(screen.getByRole("button", { name: "branch" })).toHaveTextContent("feature/x"),
+    );
     await user.click(screen.getByRole("button", { name: "Log out" }));
     expect(await screen.findByRole("form", { name: "login" })).toBeInTheDocument();
     expect(fake.sessionOpen).toBe(false);
