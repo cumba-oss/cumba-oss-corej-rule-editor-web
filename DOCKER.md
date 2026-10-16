@@ -143,8 +143,12 @@ so the TLS proxy must:
 - keep `Host` as the browser sent it, port included (or set `X-Forwarded-Host`);
 - **drop** a client's `X-Forwarded-Host` / `X-Forwarded-Port`.
 
-Caddy's `reverse_proxy` does the first two by itself; an nginx in front needs
-`proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header Host $http_host;`.
+Caddy's `reverse_proxy` does the first two by itself, but passes a client's `X-Forwarded-Port`
+through: add `header_up -X-Forwarded-Port`. An nginx in front needs
+`proxy_set_header X-Forwarded-Proto $scheme;` and `proxy_set_header Host $http_host;`
+(`$http_host`, not `$host`, which drops a non-default port). A set `X-Forwarded-Host` must carry
+a non-default port (`host:8443`): once it is present the port is no longer taken from `Host`,
+so a proxy on :8443 sending `X-Forwarded-Host $host` gets `403 Invalid CORS request`.
 Without the scheme, every login and save answers `403 Invalid CORS request` (troubleshooting).
 
 ### The brand
